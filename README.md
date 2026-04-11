@@ -1,10 +1,10 @@
-# LL2LO - LongList to LibreOffice
+# LL2PP - LongList to PowerPoint
 
 **Convert CV PDFs to Presentation Slides - Completely Client-Side, Provider-Agnostic**
 
 ## Overview
 
-LL2LO (formerly LL2PP) is a web-based tool that automates the extraction of candidate information from CV/resume PDFs and generates professional presentation slides. The project has undergone a strategic architectural pivot from a Google-dependent ecosystem to a **provider-agnostic, client-side architecture**.
+LL2PP is a web-based tool that automates the extraction of candidate information from CV/resume PDFs and generates professional presentation slides. The project has undergone a strategic architectural pivot from a Google-dependent ecosystem to a **provider-agnostic, client-side architecture**.
 
 ## Key Features
 
@@ -70,7 +70,7 @@ We are transitioning from a Google-centric architecture to a universal, provider
 - [x] Remove Google Cloud Project ID requirements
 - [x] Remove API tier system (free/paid Google quotas)
 - [x] Rename `geminiService.ts` → `aiService.ts`
-- [x] Update branding: "LongList to LibreOffice"
+- [x] Update branding: "LongList to PowerPoint"
 
 ### 🚧 Phase 2: AI Service Refactor (NEXT)
 - [ ] Refactor `aiService.ts` to support OpenAI/Anthropic
