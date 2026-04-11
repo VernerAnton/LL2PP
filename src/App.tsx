@@ -284,7 +284,7 @@ function App() {
       </div>
 
       <div className="subtitle">
-        [ LongList to LibreOffice - Convert CV PDFs to Presentations ]
+        [ LongList to PowerPoint - Convert CV PDFs to Presentations ]
       </div>
 
       <LlmKeyInput
