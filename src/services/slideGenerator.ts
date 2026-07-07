@@ -37,7 +37,7 @@ export class SlideGenerator {
 
       // 1. Set up presentation properties
       prs.layout = 'LAYOUT_4x3'; // 4:3 standard aspect ratio
-      prs.author = 'LL2LO - LongList to LibreOffice';
+      prs.author = 'LL2PP - LongList to PowerPoint';
       prs.title = `Candidate Longlist - ${new Date().toLocaleDateString()}`;
 
       // 2. Define slide master with template background image
