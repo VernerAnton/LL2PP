@@ -151,12 +151,12 @@ export function LlmKeyInput({
               [ HAIKU 4.5 ]
             </button>
             <button
-              onClick={() => onModelChange('claude-sonnet-4-6')}
+              onClick={() => onModelChange('claude-sonnet-5')}
               style={{
                 padding: '0.5rem 1rem',
-                background: anthropicModel === 'claude-sonnet-4-6' ? textColor : 'none',
+                background: anthropicModel === 'claude-sonnet-5' ? textColor : 'none',
                 border: `2px solid ${borderColor}`,
-                color: anthropicModel === 'claude-sonnet-4-6' ? bgColor : textColor,
+                color: anthropicModel === 'claude-sonnet-5' ? bgColor : textColor,
                 fontFamily: 'Courier New, monospace',
                 fontWeight: 'bold',
                 cursor: 'pointer',
@@ -164,7 +164,7 @@ export function LlmKeyInput({
                 fontSize: '0.75rem',
               }}
             >
-              [ SONNET 4.6 ]
+              [ SONNET 5 ]
             </button>
             <button
               onClick={() => onModelChange('claude-opus-4-6')}
@@ -192,8 +192,9 @@ export function LlmKeyInput({
             }}
           >
             {anthropicModel === 'claude-haiku-4-5-20251001' && '⚡ Haiku 4.5 - Fastest & Cheapest ($1/1M in, $5/1M out)'}
-            {anthropicModel === 'claude-sonnet-4-6' && '⚖️ Sonnet 4.6 - Latest Balanced ($3/1M in, $15/1M out)'}
+            {anthropicModel === 'claude-sonnet-5' && '⚖️ Sonnet 5 - Latest Balanced (intro $2/1M in, $10/1M out)'}
             {anthropicModel === 'claude-opus-4-6' && '🧠 Opus 4.6 - Most Capable ($5/1M in, $25/1M out)'}
+            {anthropicModel === 'claude-sonnet-4-6' && '⚖️ Sonnet 4.6 - Legacy ($3/1M in, $15/1M out)'}
             {anthropicModel === 'claude-sonnet-4-5-20250929' && '⚖️ Sonnet 4.5 - Legacy ($3/1M in, $15/1M out)'}
             {anthropicModel === 'claude-opus-4-5-20251101' && '🧠 Opus 4.5 - Legacy ($5/1M in, $25/1M out)'}
           </div>

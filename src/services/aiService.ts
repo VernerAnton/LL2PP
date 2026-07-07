@@ -50,7 +50,7 @@ interface AIResponse {
 export class AIService {
   private static apiKey: string | null = null;
   private static provider: AiProvider = 'anthropic';
-  private static anthropicModel: AnthropicModel = 'claude-sonnet-4-6';
+  private static anthropicModel: AnthropicModel = 'claude-sonnet-5';
   private static extendedThinking: boolean = false;
   private static retryDelays: number[] = [2000, 4000, 8000]; // 2s, 4s, 8s
 
@@ -146,11 +146,13 @@ export class AIService {
    */
   private static calculateCost(inputTokens: number, outputTokens: number): number {
     const pricing: Record<string, { input: number; output: number }> = {
-      // Anthropic Claude 4.6 (per 1M tokens)
+      // Anthropic Claude 5 / 4.6 (per 1M tokens)
       'claude-haiku-4-5-20251001': { input: 1.00, output: 5.00 },
-      'claude-sonnet-4-6': { input: 3.00, output: 15.00 },
+      // Sonnet 5 introductory pricing ($2/$10) applies through 2026-08-31; reverts to $3/$15 after
+      'claude-sonnet-5': { input: 2.00, output: 10.00 },
       'claude-opus-4-6': { input: 5.00, output: 25.00 },
-      // Anthropic Claude 4.5 legacy (per 1M tokens)
+      // Anthropic Claude 4.6 / 4.5 legacy (per 1M tokens)
+      'claude-sonnet-4-6': { input: 3.00, output: 15.00 },
       'claude-sonnet-4-5-20250929': { input: 3.00, output: 15.00 },
       'claude-opus-4-5-20251101': { input: 5.00, output: 25.00 },
       // OpenAI (per 1M tokens)
