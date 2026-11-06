@@ -50,7 +50,7 @@ interface AIResponse {
 export class AIService {
   private static apiKey: string | null = null;
   private static provider: AiProvider = 'anthropic';
-  private static anthropicModel: AnthropicModel = 'claude-sonnet-5';
+  private static anthropicModel: AnthropicModel = 'claude-sonnet-5-5';
   private static extendedThinking: boolean = false;
   private static retryDelays: number[] = [2000, 4000, 8000]; // 2s, 4s, 8s
 
@@ -146,15 +146,11 @@ export class AIService {
    */
   private static calculateCost(inputTokens: number, outputTokens: number): number {
     const pricing: Record<string, { input: number; output: number }> = {
-      // Anthropic Claude 5 / 4.6 (per 1M tokens)
-      'claude-haiku-4-5-20251001': { input: 1.00, output: 5.00 },
-      // Sonnet 5 introductory pricing ($2/$10) applies through 2026-08-31; reverts to $3/$15 after
-      'claude-sonnet-5': { input: 2.00, output: 10.00 },
-      'claude-opus-4-6': { input: 5.00, output: 25.00 },
-      // Anthropic Claude 4.6 / 4.5 legacy (per 1M tokens)
-      'claude-sonnet-4-6': { input: 3.00, output: 15.00 },
-      'claude-sonnet-4-5-20250929': { input: 3.00, output: 15.00 },
-      'claude-opus-4-5-20251101': { input: 5.00, output: 25.00 },
+      // Anthropic Claude 5.5 (per 1M tokens)
+      // Haiku 5.5 rates apply to prompts up to 100K tokens ($0.50/$2.50 beyond) — CV prompts stay well under
+      'claude-haiku-5-5': { input: 0.10, output: 0.50 },
+      'claude-sonnet-5-5': { input: 2.00, output: 10.00 },
+      'claude-opus-5-5': { input: 4.00, output: 20.00 },
       // OpenAI (per 1M tokens)
       'gpt-4-turbo': { input: 10.00, output: 30.00 },
       'gpt-4': { input: 30.00, output: 60.00 },
@@ -334,11 +330,12 @@ ${cvText}`;
     console.log(`🤖 Calling Anthropic API (${this.anthropicModel}) directly from browser...`);
     console.log(`🔑 API Key prefix: ${this.apiKey?.substring(0, 15)}...`);
 
-    // Extended thinking requires temperature=1 and higher max_tokens to accommodate thinking budget
-    const thinkingBudget = 8000;
+    // Claude 5.5 models: thinking is adaptive (the model decides how much to think) and
+    // depth is controlled with `effort`. `budget_tokens` and `temperature` are rejected (400).
+    // max_tokens must leave room for thinking tokens as well as the JSON answer.
     const requestBody: Record<string, any> = {
       model: this.anthropicModel,
-      max_tokens: this.extendedThinking ? thinkingBudget + 2048 : 2048,
+      max_tokens: 16000,
       system: 'You are a helpful assistant that extracts structured data from CVs. Always respond with valid JSON only, no additional text or explanations.',
       messages: [
         {
@@ -346,23 +343,31 @@ ${cvText}`;
           content: prompt
         }
       ],
+      output_config: { effort: this.extendedThinking ? 'high' : 'low' },
     };
 
     if (this.extendedThinking) {
-      requestBody.thinking = { type: 'enabled', budget_tokens: thinkingBudget };
-      // temperature must be 1 (or omitted) when extended thinking is enabled
-    } else {
-      requestBody.temperature = 0.1;
+      requestBody.thinking = { type: 'adaptive' };
+    }
+
+    const headers: Record<string, string> = {
+      'x-api-key': this.apiKey!,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',  // Enable CORS for browser calls
+      'Content-Type': 'application/json',
+    };
+
+    // Sonnet 5.5 / Opus 5.5: if a safety classifier declines a request (false positives happen),
+    // let the API transparently retry on a fallback model instead of failing the CV.
+    // Haiku 5.5 has no server-side fallback.
+    if (this.anthropicModel !== 'claude-haiku-5-5') {
+      requestBody.fallbacks = 'default';
+      headers['anthropic-beta'] = 'server-side-fallback-2026-07-01';
     }
 
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'x-api-key': this.apiKey!,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',  // Enable CORS for browser calls
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify(requestBody),
     });
 
@@ -394,7 +399,11 @@ ${cvText}`;
       throw new Error('Invalid response structure from Anthropic API');
     }
 
-    // Find the text block — when extended thinking is enabled, thinking blocks come first
+    if (data.stop_reason === 'refusal') {
+      throw new Error(`Anthropic API declined the request (refusal${data.stop_details?.category ? `: ${data.stop_details.category}` : ''})`);
+    }
+
+    // Find the text block — thinking (and fallback) blocks may come first
     const textBlock = data.content.find((block: any) => block.type === 'text');
     if (!textBlock?.text) {
       throw new Error('No text content in Anthropic API response');

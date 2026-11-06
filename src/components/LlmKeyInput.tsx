@@ -135,12 +135,12 @@ export function LlmKeyInput({
           </label>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             <button
-              onClick={() => onModelChange('claude-haiku-4-5-20251001')}
+              onClick={() => onModelChange('claude-haiku-5-5')}
               style={{
                 padding: '0.5rem 1rem',
-                background: anthropicModel === 'claude-haiku-4-5-20251001' ? textColor : 'none',
+                background: anthropicModel === 'claude-haiku-5-5' ? textColor : 'none',
                 border: `2px solid ${borderColor}`,
-                color: anthropicModel === 'claude-haiku-4-5-20251001' ? bgColor : textColor,
+                color: anthropicModel === 'claude-haiku-5-5' ? bgColor : textColor,
                 fontFamily: 'Courier New, monospace',
                 fontWeight: 'bold',
                 cursor: 'pointer',
@@ -148,15 +148,15 @@ export function LlmKeyInput({
                 fontSize: '0.75rem',
               }}
             >
-              [ HAIKU 4.5 ]
+              [ HAIKU 5.5 ]
             </button>
             <button
-              onClick={() => onModelChange('claude-sonnet-5')}
+              onClick={() => onModelChange('claude-sonnet-5-5')}
               style={{
                 padding: '0.5rem 1rem',
-                background: anthropicModel === 'claude-sonnet-5' ? textColor : 'none',
+                background: anthropicModel === 'claude-sonnet-5-5' ? textColor : 'none',
                 border: `2px solid ${borderColor}`,
-                color: anthropicModel === 'claude-sonnet-5' ? bgColor : textColor,
+                color: anthropicModel === 'claude-sonnet-5-5' ? bgColor : textColor,
                 fontFamily: 'Courier New, monospace',
                 fontWeight: 'bold',
                 cursor: 'pointer',
@@ -164,15 +164,15 @@ export function LlmKeyInput({
                 fontSize: '0.75rem',
               }}
             >
-              [ SONNET 5 ]
+              [ SONNET 5.5 ]
             </button>
             <button
-              onClick={() => onModelChange('claude-opus-4-6')}
+              onClick={() => onModelChange('claude-opus-5-5')}
               style={{
                 padding: '0.5rem 1rem',
-                background: anthropicModel === 'claude-opus-4-6' ? textColor : 'none',
+                background: anthropicModel === 'claude-opus-5-5' ? textColor : 'none',
                 border: `2px solid ${borderColor}`,
-                color: anthropicModel === 'claude-opus-4-6' ? bgColor : textColor,
+                color: anthropicModel === 'claude-opus-5-5' ? bgColor : textColor,
                 fontFamily: 'Courier New, monospace',
                 fontWeight: 'bold',
                 cursor: 'pointer',
@@ -180,7 +180,7 @@ export function LlmKeyInput({
                 fontSize: '0.75rem',
               }}
             >
-              [ OPUS 4.6 ]
+              [ OPUS 5.5 ]
             </button>
           </div>
           <div
@@ -191,12 +191,9 @@ export function LlmKeyInput({
               color: textColor,
             }}
           >
-            {anthropicModel === 'claude-haiku-4-5-20251001' && '⚡ Haiku 4.5 - Fastest & Cheapest ($1/1M in, $5/1M out)'}
-            {anthropicModel === 'claude-sonnet-5' && '⚖️ Sonnet 5 - Latest Balanced (intro $2/1M in, $10/1M out)'}
-            {anthropicModel === 'claude-opus-4-6' && '🧠 Opus 4.6 - Most Capable ($5/1M in, $25/1M out)'}
-            {anthropicModel === 'claude-sonnet-4-6' && '⚖️ Sonnet 4.6 - Legacy ($3/1M in, $15/1M out)'}
-            {anthropicModel === 'claude-sonnet-4-5-20250929' && '⚖️ Sonnet 4.5 - Legacy ($3/1M in, $15/1M out)'}
-            {anthropicModel === 'claude-opus-4-5-20251101' && '🧠 Opus 4.5 - Legacy ($5/1M in, $25/1M out)'}
+            {anthropicModel === 'claude-haiku-5-5' && '⚡ Haiku 5.5 - Fastest & Cheapest ($0.10/1M in, $0.50/1M out)'}
+            {anthropicModel === 'claude-sonnet-5-5' && '⚖️ Sonnet 5.5 - Latest Balanced ($2/1M in, $10/1M out)'}
+            {anthropicModel === 'claude-opus-5-5' && '🧠 Opus 5.5 - Most Capable ($4/1M in, $20/1M out)'}
           </div>
 
           {/* Extended Thinking Toggle */}
@@ -212,7 +209,7 @@ export function LlmKeyInput({
                 EXTENDED THINKING:
               </label>
               <span
-                title="Enables deeper reasoning before extracting CV data. Recommended for personal CVs with unusual formatting, non-standard date formats, or ambiguous role titles. Has no benefit for clean, consistently-formatted exports. Increases token usage (~8K extra tokens per CV)."
+                title="Enables deeper reasoning before extracting CV data. Recommended for personal CVs with unusual formatting, non-standard date formats, or ambiguous role titles. Has no benefit for clean, consistently-formatted exports. Increases token usage and processing time per CV."
                 style={{ cursor: 'help', fontSize: '0.75rem', opacity: 0.6, color: textColor }}
               >
                 ⓘ
@@ -243,8 +240,8 @@ export function LlmKeyInput({
               }}
             >
               {extendedThinking
-                ? '🧠 Extended thinking ON — deeper reasoning, higher token usage (budget: 8K tokens)'
-                : '💡 Extended thinking OFF — standard speed and cost'}
+                ? '🧠 Extended thinking ON — deeper reasoning, higher token usage (high effort)'
+                : '💡 Extended thinking OFF — low effort, fastest and cheapest'}
             </div>
           </div>
         </div>

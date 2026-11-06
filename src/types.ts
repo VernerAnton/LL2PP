@@ -10,12 +10,9 @@ export type AiProvider = 'openai' | 'anthropic';
 
 export type OpenAIModel = 'gpt-4' | 'gpt-4-turbo' | 'gpt-3.5-turbo';
 export type AnthropicModel =
-  | 'claude-haiku-4-5-20251001'     // Haiku 4.5 - Fastest, cheapest ($1/1M in, $5/1M out)
-  | 'claude-sonnet-5'               // Sonnet 5 - Latest balanced (intro $2/1M in, $10/1M out through 2026-08-31; then $3/$15)
-  | 'claude-opus-4-6'               // Opus 4.6 - Most capable ($5/1M in, $25/1M out)
-  | 'claude-sonnet-4-6'             // Sonnet 4.6 - Legacy ($3/1M in, $15/1M out)
-  | 'claude-sonnet-4-5-20250929'    // Sonnet 4.5 - Legacy ($3/1M in, $15/1M out)
-  | 'claude-opus-4-5-20251101';     // Opus 4.5 - Legacy ($5/1M in, $25/1M out)
+  | 'claude-haiku-5-5'   // Haiku 5.5 - Fastest, cheapest ($0.10/1M in, $0.50/1M out; prompts up to 100K tokens)
+  | 'claude-sonnet-5-5'  // Sonnet 5.5 - Latest balanced ($2/1M in, $10/1M out)
+  | 'claude-opus-5-5';   // Opus 5.5 - Most capable ($4/1M in, $20/1M out)
 
 export type OutputMethod = 'slides' | 'manual';
 
