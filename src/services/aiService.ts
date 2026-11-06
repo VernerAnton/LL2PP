@@ -1,29 +1,68 @@
-// AI service for CV data extraction - Provider Agnostic (OpenAI/Anthropic)
-import type { CandidateData, WorkExperience, Education, AiProvider, AnthropicModel } from '../types';
-import { RateLimiter } from './rateLimiter';
+// AI service for CV data extraction using Claude (Anthropic API)
+import Anthropic from '@anthropic-ai/sdk';
+import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import { z } from 'zod';
+import type { CandidateData, WorkExperience, Education } from '../types';
+import { RateLimiter } from './rateLimiter';
 
-// Rate limiter instance (1 request per second to be safe)
+// Space out request starts (1 per second) so bursts don't trip per-minute rate limits.
 const rateLimiter = new RateLimiter(1000);
 
-// Zod schema for validating AI-extracted CV data
+// Schema for the extracted CV data. It is sent to the API as a structured-output JSON schema,
+// so Claude's answer is guaranteed to be valid JSON of this shape, and the SDK validates the
+// constraints the API can't enforce (e.g. non-empty strings) on the way back.
 const WorkExperienceSchema = z.object({
-  company: z.string().min(1, 'Company name is required'),
-  jobTitle: z.string().min(1, 'Job title is required'),
+  company: z.string().min(1),
+  jobTitle: z.string().min(1),
   dates: z.string().optional(),
 });
 
 const EducationSchema = z.object({
-  institution: z.string().min(1, 'Institution name is required'),
-  degree: z.string().optional(), // Optional - formal degrees, exchange programs (e.g. Erasmus), and significant certificates are all valid
+  institution: z.string().min(1),
+  // Optional - formal degrees, exchange programs (e.g. Erasmus), and significant certificates are all valid
+  degree: z.string().optional(),
   dates: z.string().optional(),
 });
 
 const CVDataSchema = z.object({
-  name: z.string().min(1, 'Candidate name is required'),
-  workHistory: z.array(WorkExperienceSchema).max(5, 'Maximum 5 work experiences'),
-  education: z.array(EducationSchema).optional().default([]), // Education array can be empty if no degrees found
+  name: z.string().min(1),
+  workHistory: z.array(WorkExperienceSchema),
+  education: z.array(EducationSchema),
 });
+
+type CVData = z.infer<typeof CVDataSchema>;
+
+// The app always uses the newest Claude Sonnet the API key can access (looked up via the
+// Models API). This is the known-good model used if that lookup fails or the newest model
+// rejects the request.
+const FALLBACK_MODEL = 'claude-sonnet-5-5';
+
+// Per-1M-token prices (USD) for the cost estimate shown in the UI. The Models API doesn't
+// report prices, so a newer Sonnet not listed here is estimated at Sonnet 5.5 rates.
+const PRICING: Record<string, { input: number; output: number }> = {
+  'claude-sonnet-5-5': { input: 2.00, output: 10.00 },
+  // Server-side refusal fallbacks may hand a request to another model
+  'claude-opus-5-5': { input: 4.00, output: 20.00 },
+};
+
+const SYSTEM_PROMPT = `You extract structured candidate data from CVs for a recruitment longlist. The data is placed on presentation slides, so it must be accurate and consistently formatted.
+
+1. Name
+   - The candidate's complete full name.
+
+2. Work history (at most the 5 most recent positions, most recent first)
+   - Include only operational/employment positions the person actively held (CEO, CTO, Manager, Engineer, etc.).
+   - Exclude all board positions: Board Member, Board Director, Advisory Board, Board of Directors, Non-Executive Director, Supervisory Board, Board Observer, Board Advisor. If someone has both operational and board roles, keep only the operational ones.
+   - For each position give the company name, job title, and dates.
+   - Dates: "MM/YYYY - MM/YYYY" when months are available (e.g. "03/2020 - 08/2023"), otherwise "YYYY - YYYY" (e.g. "2020 - 2023"). Use "Present" as the end date for current positions (e.g. "01/2022 - Present").
+   - If the CV gives no dates for a position, leave the dates out. Never guess or invent dates.
+
+3. Education
+   - Include formal degrees (Bachelor, Master, MBA, PhD, etc.), significant certificate programs, and international exchange semesters (e.g. Erasmus, study abroad).
+   - For exchanges or certificates without a formal degree title, put the program or exchange name in the degree field (e.g. "Erasmus Exchange Semester", "Google Data Analytics Certificate").
+   - Exclude high school / secondary education, short online courses (under 3 months), and entries that list only an institution with no program or exchange.
+   - Give the institution name, degree/program/exchange name where there is one, and dates in the same format as work history (leave dates out if missing).
+   - If nothing qualifies, return an empty list.`;
 
 export interface TokenUsage {
   inputTokens: number;
@@ -39,43 +78,70 @@ export interface ExtractionResult {
   usage?: TokenUsage;
 }
 
-interface AIResponse {
-  text: string;
-  usage: {
-    inputTokens: number;
-    outputTokens: number;
-  };
-}
-
 export class AIService {
+  private static client: Anthropic | null = null;
   private static apiKey: string | null = null;
-  private static provider: AiProvider = 'anthropic';
-  private static anthropicModel: AnthropicModel = 'claude-sonnet-5';
+  // Newest compatible Sonnet, looked up once per API key
+  private static model: Promise<string> | null = null;
   private static extendedThinking: boolean = false;
-  private static retryDelays: number[] = [2000, 4000, 8000]; // 2s, 4s, 8s
+  // Retries for answers that fail validation. API errors (429, 5xx, network) are retried
+  // inside the SDK, which honours the API's retry-after header.
+  private static maxAttempts = 2;
 
   /**
-   * Set API key for the AI provider
+   * Set the Anthropic API key (null clears it)
    */
   static setApiKey(key: string | null): void {
+    if (key === this.apiKey) return;
     this.apiKey = key;
-    console.log(`🔧 API Key ${key ? 'set' : 'cleared'}`);
+    this.model = null;
+    // BYOK: the user's own key is used directly from their browser; it never touches our servers.
+    this.client = key
+      ? new Anthropic({ apiKey: key, dangerouslyAllowBrowser: true, maxRetries: 3 })
+      : null;
   }
 
   /**
-   * Set AI provider (OpenAI or Anthropic)
+   * The model extraction runs on: the newest active Claude Sonnet that supports everything
+   * the request uses. Looked up once per API key, so a new Sonnet release is picked up
+   * automatically on the next page load.
    */
-  static setProvider(provider: AiProvider): void {
-    this.provider = provider;
-    console.log(`🔧 AI Provider set to: ${provider}`);
+  static getModel(): Promise<string> {
+    if (!this.client) return Promise.resolve(FALLBACK_MODEL);
+    if (!this.model) this.model = this.findNewestSonnet(this.client);
+    return this.model;
+  }
+
+  private static async findNewestSonnet(client: Anthropic): Promise<string> {
+    try {
+      const sonnets: Anthropic.ModelInfo[] = [];
+      for await (const model of client.models.list()) {
+        if (model.line === 'sonnet' && model.lifecycle === 'active' && this.isCompatible(model)) {
+          sonnets.push(model);
+        }
+      }
+      sonnets.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+      const newest = sonnets[0]?.id ?? FALLBACK_MODEL;
+      console.log(`🤖 Using model: ${newest}`);
+      return newest;
+    } catch (error) {
+      console.warn(`⚠️ Could not look up the newest Sonnet, using ${FALLBACK_MODEL}:`, error);
+      return FALLBACK_MODEL;
+    }
   }
 
   /**
-   * Set Anthropic model (Haiku, Sonnet, or Opus)
+   * Whether a model supports the features the extraction request relies on
    */
-  static setAnthropicModel(model: AnthropicModel): void {
-    this.anthropicModel = model;
-    console.log(`🔧 Anthropic Model set to: ${model}`);
+  private static isCompatible(model: Anthropic.ModelInfo): boolean {
+    const caps = model.capabilities;
+    if (!caps) return false;
+    return (
+      caps.structured_outputs.supported &&
+      caps.thinking.types.adaptive.supported &&
+      caps.effort.low.supported &&
+      caps.effort.high.supported
+    );
   }
 
   /**
@@ -83,399 +149,141 @@ export class AIService {
    */
   static setExtendedThinking(enabled: boolean): void {
     this.extendedThinking = enabled;
-    console.log(`🔧 Extended Thinking: ${enabled ? 'enabled' : 'disabled'}`);
   }
 
   /**
    * Extract structured data from a single CV text
    */
   static async extractCVData(cvText: string): Promise<ExtractionResult> {
-    if (!this.apiKey) {
+    if (!this.client) {
       return {
         success: false,
-        error: 'API key not set. Please enter your API key.',
+        error: 'API key not set. Please enter your Anthropic API key.',
       };
     }
 
-    // Use rate limiter to queue the request
-    return rateLimiter.enqueue(async () => {
-      return this.extractWithRetry(cvText);
-    });
+    const client = this.client;
+    return rateLimiter.enqueue(() => this.extractWithRetry(client, cvText));
   }
 
   /**
-   * Extract with retry logic (3 attempts with smart backoff for 429 errors)
+   * Run the extraction, retrying once if Claude's answer fails validation
    */
-  private static async extractWithRetry(
-    cvText: string,
-    attempt: number = 1
-  ): Promise<ExtractionResult> {
-    const maxAttempts = 3;
+  private static async extractWithRetry(client: Anthropic, cvText: string): Promise<ExtractionResult> {
+    let lastError = 'Unknown error';
 
-    try {
-      const result = await this.performExtraction(cvText);
-      return result;
-    } catch (error: any) {
-      console.error(`❌ Extraction attempt ${attempt} failed:`, error.message);
+    for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+      const model = await this.getModel();
+      try {
+        return await this.performExtraction(client, model, cvText);
+      } catch (error) {
+        lastError = this.describeError(error);
+        console.error(`❌ Extraction attempt ${attempt} failed:`, lastError);
 
-      if (attempt < maxAttempts) {
-        // Check if this is a 429 rate limit error with retry-after header
-        let delay = this.retryDelays[attempt - 1];
-
-        if (error.retryAfter) {
-          // Use the exact retry-after time from Anthropic API
-          delay = error.retryAfter * 1000; // Convert seconds to milliseconds
-          console.log(`⏱️  Rate limit hit. API says retry after ${error.retryAfter}s... (attempt ${attempt + 1}/${maxAttempts})`);
-        } else {
-          console.log(`⏳ Retrying in ${delay / 1000}s... (attempt ${attempt + 1}/${maxAttempts})`);
+        // A newer Sonnet may not accept a request built for Sonnet 5.5. Switch to the
+        // known-good model for the rest of the session and try again.
+        if (error instanceof Anthropic.BadRequestError && model !== FALLBACK_MODEL) {
+          console.warn(`⚠️ ${model} rejected the request; switching to ${FALLBACK_MODEL}`);
+          this.model = Promise.resolve(FALLBACK_MODEL);
+          continue;
         }
 
-        await this.sleep(delay);
-        return this.extractWithRetry(cvText, attempt + 1);
+        // The SDK has already retried transient API errors; anything left (bad key,
+        // bad request, exhausted retries) won't be fixed by trying again.
+        if (error instanceof Anthropic.APIError) break;
       }
-
-      return {
-        success: false,
-        error: `Failed after ${maxAttempts} attempts: ${error.message}`,
-      };
     }
+
+    return { success: false, error: lastError };
   }
 
   /**
-   * Calculate cost based on model and token usage
+   * Call Claude and turn the response into candidate data
    */
-  private static calculateCost(inputTokens: number, outputTokens: number): number {
-    const pricing: Record<string, { input: number; output: number }> = {
-      // Anthropic Claude 5 / 4.6 (per 1M tokens)
-      'claude-haiku-4-5-20251001': { input: 1.00, output: 5.00 },
-      // Sonnet 5 introductory pricing ($2/$10) applies through 2026-08-31; reverts to $3/$15 after
-      'claude-sonnet-5': { input: 2.00, output: 10.00 },
-      'claude-opus-4-6': { input: 5.00, output: 25.00 },
-      // Anthropic Claude 4.6 / 4.5 legacy (per 1M tokens)
-      'claude-sonnet-4-6': { input: 3.00, output: 15.00 },
-      'claude-sonnet-4-5-20250929': { input: 3.00, output: 15.00 },
-      'claude-opus-4-5-20251101': { input: 5.00, output: 25.00 },
-      // OpenAI (per 1M tokens)
-      'gpt-4-turbo': { input: 10.00, output: 30.00 },
-      'gpt-4': { input: 30.00, output: 60.00 },
-      'gpt-3.5-turbo': { input: 0.50, output: 1.50 },
-    };
+  private static async performExtraction(client: Anthropic, model: string, cvText: string): Promise<ExtractionResult> {
+    const response = await client.beta.messages.parse({
+      model,
+      // Leaves room for thinking tokens as well as the JSON answer
+      max_tokens: 16000,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: `Extract the candidate data from this CV:\n\n${cvText}` }],
+      // Claude 5.5 models think adaptively; effort sets how deep. Extended thinking = high effort.
+      ...(this.extendedThinking ? { thinking: { type: 'adaptive' as const } } : {}),
+      output_config: {
+        effort: this.extendedThinking ? 'high' : 'low',
+        format: betaZodOutputFormat(CVDataSchema),
+      },
+      // If a safety classifier declines a CV by mistake, the API retries it on a
+      // fallback model within the same call instead of failing.
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+    });
 
-    const model = this.provider === 'anthropic' ? this.anthropicModel : 'gpt-4-turbo';
-    const rates = pricing[model] || { input: 0, output: 0 };
-
-    const inputCost = (inputTokens / 1_000_000) * rates.input;
-    const outputCost = (outputTokens / 1_000_000) * rates.output;
-
-    return inputCost + outputCost;
-  }
-
-  /**
-   * Perform the actual extraction using the selected AI provider
-   */
-  private static async performExtraction(cvText: string): Promise<ExtractionResult> {
-    const prompt = this.buildExtractionPrompt(cvText);
-
-    let response: AIResponse;
-
-    if (this.provider === 'openai') {
-      response = await this.callOpenAI(prompt);
-    } else {
-      response = await this.callAnthropic(prompt);
+    if (response.stop_reason === 'refusal') {
+      const category = response.stop_details?.category;
+      throw new Error(`Claude declined to process this CV${category ? ` (${category})` : ''}`);
+    }
+    if (response.stop_reason === 'max_tokens') {
+      throw new Error('Claude ran out of output tokens before finishing');
+    }
+    if (!response.parsed_output) {
+      throw new Error('Claude returned no structured data');
     }
 
-    // Parse the JSON response
-    const extractedData = this.parseResponse(response.text);
+    const candidateData = this.toCandidateData(response.parsed_output, cvText);
 
-    // Validate and clean the data
-    const candidateData: CandidateData = {
-      name: extractedData.name || 'Unknown',
-      workHistory: this.cleanWorkHistory(extractedData.workHistory || []),
-      education: this.cleanEducation(extractedData.education || []),
-      rawText: cvText,
-    };
-
-    // Filter out board member roles
-    candidateData.workHistory = this.filterBoardMemberRoles(candidateData.workHistory);
-
-    // Calculate usage and cost
-    const totalTokens = response.usage.inputTokens + response.usage.outputTokens;
-    const estimatedCost = this.calculateCost(response.usage.inputTokens, response.usage.outputTokens);
+    const inputTokens = response.usage.input_tokens;
+    const outputTokens = response.usage.output_tokens;
 
     return {
       success: true,
       data: candidateData,
       usage: {
-        inputTokens: response.usage.inputTokens,
-        outputTokens: response.usage.outputTokens,
-        totalTokens,
-        estimatedCost,
+        inputTokens,
+        outputTokens,
+        totalTokens: inputTokens + outputTokens,
+        // response.model is the model that actually answered (differs if a fallback ran)
+        estimatedCost: this.calculateCost(response.model, inputTokens, outputTokens),
       },
     };
   }
 
   /**
-   * Build the extraction prompt with explicit formatting requirements
+   * Calculate estimated cost in USD
    */
-  private static buildExtractionPrompt(cvText: string): string {
-    return `You are a CV data extraction specialist. Extract structured information from the CV below.
-
-CRITICAL INSTRUCTIONS:
-
-1. FULL NAME
-   - Extract the candidate's complete full name
-
-2. WORK HISTORY (Maximum 5 most recent positions)
-   - EXCLUDE all board positions including: Board Member, Board Director, Advisory Board, Board of Directors, Non-Executive Director, Supervisory Board, Board Observer, Board Advisor
-   - ONLY include operational/employment positions where the person actively worked (CEO, CTO, Manager, Engineer, etc.)
-   - If someone has both operational and board roles, ONLY include the operational ones
-   - Extract: company name, job title, and dates
-   - Date format: Use MM/YYYY - MM/YYYY if months are available (example: "03/2020 - 08/2023"), or YYYY - YYYY if only years (example: "2020 - 2023")
-   - For current positions, use "Present" as end date (example: "01/2022 - Present" or "2022 - Present")
-   - If dates are not present in the CV, omit the dates field entirely — do NOT guess or invent dates
-   - List most recent position first
-
-3. EDUCATION
-   - INCLUDE: formal degrees (Bachelor, Master, MBA, PhD, etc.), significant certificate programs, and international exchange semesters (e.g. Erasmus, study abroad semesters)
-   - For exchange semesters or certificates that have no formal degree title, map the program or exchange name to the "degree" field (e.g. "Erasmus Exchange Semester", "Google Data Analytics Certificate")
-   - EXCLUDE: high school / secondary education, short online courses (< 3 months), and entries that list only an institution with no program or exchange specified
-   - Extract: institution name, degree/program/exchange name (if applicable), and dates
-   - If no qualifying education is found, return empty array: []
-   - Date format: Use MM/YYYY - MM/YYYY if months are available, or YYYY - YYYY if only years (example: "2018 - 2020")
-   - If dates missing, omit the dates field entirely
-
-REQUIRED OUTPUT FORMAT (JSON only, no other text):
-{
-  "name": "Full Name",
-  "workHistory": [
-    {
-      "company": "Company Name",
-      "jobTitle": "Job Title",
-      "dates": "MM/YYYY - MM/YYYY" or "YYYY - YYYY"
-    }
-  ],
-  "education": [
-    {
-      "institution": "Institution Name",
-      "degree": "Degree/Program/Exchange Name (if applicable)",
-      "dates": "YYYY - YYYY" or "MM/YYYY - MM/YYYY"
-    }
-  ]
-}
-
-CV TEXT:
-${cvText}`;
+  private static calculateCost(model: string, inputTokens: number, outputTokens: number): number {
+    const rates = PRICING[model] ?? PRICING[FALLBACK_MODEL];
+    return (inputTokens / 1_000_000) * rates.input + (outputTokens / 1_000_000) * rates.output;
   }
 
   /**
-   * Call OpenAI API
+   * Clean the parsed data and map it to the app's candidate type
    */
-  private static async callOpenAI(prompt: string): Promise<AIResponse> {
-    const url = 'https://api.openai.com/v1/chat/completions';
+  private static toCandidateData(data: CVData, cvText: string): CandidateData {
+    const workHistory: WorkExperience[] = this.filterBoardMemberRoles(
+      data.workHistory.map((item) => ({
+        company: item.company.trim(),
+        jobTitle: item.jobTitle.trim(),
+        dates: item.dates?.trim() || undefined,
+      }))
+    ).slice(0, 5);
 
-    console.log('🤖 Calling OpenAI API...');
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${this.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-4-turbo',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a helpful assistant that extracts structured data from CVs. Always respond with valid JSON only, no additional text.'
-          },
-          {
-            role: 'user',
-            content: prompt
-          }
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.1,
-        max_tokens: 2048,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('❌ OpenAI API Error:', errorText);
-      throw new Error(`OpenAI API request failed: ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json();
-
-    if (!data.choices || !data.choices[0]?.message?.content) {
-      throw new Error('Invalid response structure from OpenAI API');
-    }
-
-    if (!data.usage) {
-      throw new Error('No usage data in OpenAI response');
-    }
+    const education: Education[] = data.education.map((item) => ({
+      institution: item.institution.trim(),
+      degree: item.degree?.trim() || undefined,
+      dates: item.dates?.trim() || undefined,
+    }));
 
     return {
-      text: data.choices[0].message.content,
-      usage: {
-        inputTokens: data.usage.prompt_tokens || 0,
-        outputTokens: data.usage.completion_tokens || 0,
-      },
+      name: data.name.trim(),
+      workHistory,
+      education,
+      rawText: cvText,
     };
   }
 
   /**
-   * Call Anthropic API with selected model
-   */
-  private static async callAnthropic(prompt: string): Promise<AIResponse> {
-    // Direct browser API call (supported since mid-2024 with CORS header)
-    const url = 'https://api.anthropic.com/v1/messages';
-
-    console.log(`🤖 Calling Anthropic API (${this.anthropicModel}) directly from browser...`);
-    console.log(`🔑 API Key prefix: ${this.apiKey?.substring(0, 15)}...`);
-
-    // Extended thinking requires temperature=1 and higher max_tokens to accommodate thinking budget
-    const thinkingBudget = 8000;
-    const requestBody: Record<string, any> = {
-      model: this.anthropicModel,
-      max_tokens: this.extendedThinking ? thinkingBudget + 2048 : 2048,
-      system: 'You are a helpful assistant that extracts structured data from CVs. Always respond with valid JSON only, no additional text or explanations.',
-      messages: [
-        {
-          role: 'user',
-          content: prompt
-        }
-      ],
-    };
-
-    if (this.extendedThinking) {
-      requestBody.thinking = { type: 'enabled', budget_tokens: thinkingBudget };
-      // temperature must be 1 (or omitted) when extended thinking is enabled
-    } else {
-      requestBody.temperature = 0.1;
-    }
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'x-api-key': this.apiKey!,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',  // Enable CORS for browser calls
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('❌ Anthropic API Error Response:', errorText);
-      console.error('❌ Response Status:', response.status, response.statusText);
-      console.error('❌ Response Headers:', Object.fromEntries(response.headers.entries()));
-
-      // For 429 rate limit errors, capture the retry-after header
-      if (response.status === 429) {
-        const retryAfter = response.headers.get('retry-after');
-        const error: any = new Error(`Anthropic API request failed: ${response.status} ${response.statusText}`);
-
-        if (retryAfter) {
-          error.retryAfter = parseInt(retryAfter, 10);
-          console.warn(`⚠️  Rate limit exceeded. Retry after ${retryAfter} seconds.`);
-        }
-
-        throw error;
-      }
-
-      throw new Error(`Anthropic API request failed: ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json();
-
-    if (!data.content || !Array.isArray(data.content)) {
-      throw new Error('Invalid response structure from Anthropic API');
-    }
-
-    // Find the text block — when extended thinking is enabled, thinking blocks come first
-    const textBlock = data.content.find((block: any) => block.type === 'text');
-    if (!textBlock?.text) {
-      throw new Error('No text content in Anthropic API response');
-    }
-
-    if (!data.usage) {
-      throw new Error('No usage data in Anthropic response');
-    }
-
-    return {
-      text: textBlock.text,
-      usage: {
-        inputTokens: data.usage.input_tokens || 0,
-        outputTokens: data.usage.output_tokens || 0,
-      },
-    };
-  }
-
-  /**
-   * Parse and validate JSON response from AI (may be wrapped in markdown code blocks)
-   */
-  private static parseResponse(responseText: string): any {
-    let jsonText = responseText.trim();
-
-    // Remove markdown code blocks if present
-    if (jsonText.startsWith('```json')) {
-      jsonText = jsonText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-    } else if (jsonText.startsWith('```')) {
-      jsonText = jsonText.replace(/^```\s*/, '').replace(/\s*```$/, '');
-    }
-
-    // Parse JSON
-    let parsed: any;
-    try {
-      parsed = JSON.parse(jsonText);
-    } catch (e) {
-      console.error('❌ Failed to parse JSON:', jsonText);
-      throw new Error('Failed to parse JSON response from AI');
-    }
-
-    // Validate with Zod schema
-    const validationResult = CVDataSchema.safeParse(parsed);
-
-    if (!validationResult.success) {
-      console.error('❌ AI response validation failed:', validationResult.error.format());
-      console.error('Response data:', parsed);
-      throw new Error(`AI returned invalid data structure: ${validationResult.error.issues[0]?.message || 'Unknown validation error'}`);
-    }
-
-    return validationResult.data;
-  }
-
-  /**
-   * Clean and validate work history data
-   */
-  private static cleanWorkHistory(workHistory: any[]): WorkExperience[] {
-    return workHistory
-      .filter((item) => item.company && item.jobTitle)
-      .slice(0, 5) // Ensure max 5 entries
-      .map((item) => ({
-        company: String(item.company).trim(),
-        jobTitle: String(item.jobTitle).trim(),
-        dates: item.dates ? String(item.dates).trim() : undefined,
-      }));
-  }
-
-  /**
-   * Clean and validate education data
-   */
-  private static cleanEducation(education: any[]): Education[] {
-    return education
-      .filter((item) => item.institution) // Only require institution, degree is optional
-      .map((item) => ({
-        institution: String(item.institution).trim(),
-        degree: item.degree ? String(item.degree).trim() : undefined, // Handle optional degree
-        dates: item.dates ? String(item.dates).trim() : undefined,
-      }));
-  }
-
-  /**
-   * Filter out board member roles (client-side backup)
+   * Filter out board member roles (client-side backup to the prompt instruction)
    */
   private static filterBoardMemberRoles(workHistory: WorkExperience[]): WorkExperience[] {
     const boardKeywords = [
@@ -496,23 +304,24 @@ ${cvText}`;
   }
 
   /**
-   * Sleep utility for retry delays
+   * Turn an error into a message that makes sense in the UI
    */
-  private static sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  /**
-   * Clear rate limiter queue
-   */
-  static clearQueue(): void {
-    rateLimiter.clear();
-  }
-
-  /**
-   * Get current queue length
-   */
-  static getQueueLength(): number {
-    return rateLimiter.getQueueLength();
+  private static describeError(error: unknown): string {
+    if (error instanceof Anthropic.AuthenticationError) {
+      return 'Invalid API key. Check the key in the API key section.';
+    }
+    if (error instanceof Anthropic.PermissionDeniedError) {
+      return 'This API key does not have access to Claude Sonnet.';
+    }
+    if (error instanceof Anthropic.RateLimitError) {
+      return 'Rate limit reached. Lower the concurrency level or try again in a minute.';
+    }
+    if (error instanceof Anthropic.APIConnectionError) {
+      return 'Could not reach the Anthropic API. Check your internet connection.';
+    }
+    if (error instanceof Anthropic.APIError) {
+      return `Anthropic API error ${error.status ?? ''}: ${error.message}`.trim();
+    }
+    return error instanceof Error ? error.message : String(error);
   }
 }

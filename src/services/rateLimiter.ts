@@ -1,93 +1,58 @@
-// Rate limiter for API calls to avoid hitting quotas
-// Anthropic free tier: 50 RPM (requests per minute)
+// Spaces out the *start* of API requests so a burst of parallel requests doesn't trip
+// per-minute rate limits. Requests run concurrently once started — how many run at once
+// is controlled by the concurrency level in the UI.
 
 interface QueuedRequest<T> {
   fn: () => Promise<T>;
   resolve: (value: T) => void;
-  reject: (error: any) => void;
+  reject: (error: unknown) => void;
 }
 
 export class RateLimiter {
   private queue: QueuedRequest<any>[] = [];
   private processing = false;
-  private lastRequestTime = 0;
+  private lastStartTime = 0;
 
-  constructor(
-    private minDelayMs: number = 6000 // 6 seconds between requests (10 per minute)
-  ) {}
+  constructor(private minDelayMs: number = 1000) {}
 
   /**
-   * Add a request to the queue
+   * Add a request to the queue; resolves with the request's result
    */
-  async enqueue<T>(fn: () => Promise<T>): Promise<T> {
-    return new Promise((resolve, reject) => {
+  enqueue<T>(fn: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
       this.queue.push({ fn, resolve, reject });
-      this.processQueue();
+      void this.processQueue();
     });
   }
 
-  /**
-   * Process queued requests with rate limiting
-   */
   private async processQueue(): Promise<void> {
-    if (this.processing || this.queue.length === 0) {
-      return;
-    }
-
+    if (this.processing) return;
     this.processing = true;
 
     while (this.queue.length > 0) {
-      const now = Date.now();
-      const timeSinceLastRequest = now - this.lastRequestTime;
-
-      // Wait if we haven't waited long enough since last request
-      if (timeSinceLastRequest < this.minDelayMs) {
-        await this.sleep(this.minDelayMs - timeSinceLastRequest);
-      }
+      const wait = this.minDelayMs - (Date.now() - this.lastStartTime);
+      if (wait > 0) await this.sleep(wait);
 
       const request = this.queue.shift();
       if (!request) break;
 
-      try {
-        this.lastRequestTime = Date.now();
-        const result = await request.fn();
-        request.resolve(result);
-      } catch (error) {
-        request.reject(error);
-      }
+      this.lastStartTime = Date.now();
+      // Start the request without waiting for it to finish
+      request.fn().then(request.resolve, request.reject);
     }
 
     this.processing = false;
   }
 
-  /**
-   * Sleep for specified milliseconds
-   */
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
-   * Get current queue length
-   */
-  getQueueLength(): number {
-    return this.queue.length;
-  }
-
-  /**
-   * Clear all pending requests
+   * Reject and drop all requests that haven't started yet
    */
   clear(): void {
-    this.queue.forEach(request => {
-      request.reject(new Error('Request cancelled'));
-    });
+    this.queue.forEach((request) => request.reject(new Error('Request cancelled')));
     this.queue = [];
-  }
-
-  /**
-   * Update the minimum delay between requests
-   */
-  setDelay(delayMs: number): void {
-    this.minDelayMs = delayMs;
   }
 }

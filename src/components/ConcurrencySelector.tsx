@@ -15,11 +15,11 @@ export function ConcurrencySelector({ level, onLevelChange, theme }: Concurrency
 
   const getDescription = (lvl: ConcurrencyLevel): string => {
     switch (lvl) {
-      case 1: return 'Sequential (1 req/sec) - Safest, best for free tier';
+      case 1: return 'Sequential (1 at a time) - Safest, works on every API usage tier';
       case 2: return 'Low parallel (2 concurrent) - Safe for most use cases';
-      case 3: return 'Medium parallel (3 concurrent) - May cause rate limits on free tier';
-      case 4: return 'High parallel (4 concurrent) - Requires paid tier to avoid 429s';
-      case 5: return 'Max parallel (5 concurrent) - Fastest, but will likely hit rate limits on free tier';
+      case 3: return 'Medium parallel (3 concurrent) - May hit rate limits on Tier 1';
+      case 4: return 'High parallel (4 concurrent) - Best on Tier 2 or higher';
+      case 5: return 'Max parallel (5 concurrent) - Fastest, but likely to hit rate limits on Tier 1';
       default: return '';
     }
   };
@@ -48,7 +48,7 @@ export function ConcurrencySelector({ level, onLevelChange, theme }: Concurrency
       >
         <span>[ CONCURRENCY LEVEL ]</span>
         <span
-          title="ℹ️ Free tier users: Use level 1 to avoid rate limits (429 errors). Higher levels process CVs faster but may exceed your rate limit."
+          title="ℹ️ New Anthropic accounts (Tier 1) should use level 1-2 to avoid rate limits (429 errors). Higher levels process CVs faster but may exceed your rate limit."
           style={{
             cursor: 'help',
             fontSize: '0.875rem',
@@ -100,7 +100,7 @@ export function ConcurrencySelector({ level, onLevelChange, theme }: Concurrency
           color: textColor,
         }}
       >
-        ⚠️  Free tier users: Level 1 recommended to avoid rate limits. Higher levels may cause 429 errors.
+        ⚠️  New accounts (Tier 1): level 1-2 recommended. Rate-limited requests are retried automatically, but higher levels may still fail with 429 errors.
       </div>
     </div>
   );
