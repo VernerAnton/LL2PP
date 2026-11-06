@@ -11,14 +11,13 @@ import { GenerateButton } from './components/GenerateButton';
 import { StorageService } from './services/storageService';
 import { PDFService } from './services/pdfService';
 import { AIService } from './services/aiService';
-import type { Theme, ActualTheme, ProcessingStatus, CandidateData, ProcessingError, ParseMode, AiProvider, AnthropicModel, ConcurrencyLevel } from './types';
+import type { Theme, ActualTheme, ProcessingStatus, CandidateData, ProcessingError, ParseMode, AnthropicModel, ConcurrencyLevel } from './types';
 
 function App() {
   const [themePreference, setThemePreference] = useState<Theme>(() => StorageService.getTheme());
   const [actualTheme, setActualTheme] = useState<ActualTheme>(() => StorageService.getActualTheme());
 
   const [apiKey, setApiKey] = useState<string | null>(() => StorageService.getApiKey());
-  const [aiProvider, setAiProvider] = useState<AiProvider>(() => StorageService.getAiProvider());
   const [anthropicModel, setAnthropicModel] = useState<AnthropicModel>(() => StorageService.getAnthropicModel());
   const [extendedThinking, setExtendedThinking] = useState(false);
 
@@ -42,15 +41,17 @@ function App() {
   // Ref to track if extraction should be cancelled
   const cancelExtractionRef = useRef(false);
 
-  // Initialize AIService with saved values
+  // Clean up settings from older versions (e.g. the removed OpenAI provider)
   useEffect(() => {
-    if (apiKey) {
-      AIService.setApiKey(apiKey);
-    }
-    AIService.setProvider(aiProvider);
+    StorageService.removeLegacyKeys();
+  }, []);
+
+  // Keep AIService in sync with the current settings
+  useEffect(() => {
+    AIService.setApiKey(apiKey);
     AIService.setAnthropicModel(anthropicModel);
     AIService.setExtendedThinking(extendedThinking);
-  }, [apiKey, aiProvider, anthropicModel, extendedThinking]);
+  }, [apiKey, anthropicModel, extendedThinking]);
 
   useEffect(() => {
     document.body.className = `${actualTheme}-mode`;
@@ -83,30 +84,20 @@ function App() {
   const handleSaveApiKey = (key: string) => {
     setApiKey(key);
     StorageService.saveApiKey(key);
-    AIService.setApiKey(key);
   };
 
   const handleRemoveApiKey = () => {
     setApiKey(null);
     StorageService.removeApiKey();
-    AIService.setApiKey(null);
-  };
-
-  const handleProviderChange = (provider: AiProvider) => {
-    setAiProvider(provider);
-    StorageService.saveAiProvider(provider);
-    AIService.setProvider(provider);
   };
 
   const handleModelChange = (model: AnthropicModel) => {
     setAnthropicModel(model);
     StorageService.saveAnthropicModel(model);
-    AIService.setAnthropicModel(model);
   };
 
   const handleExtendedThinkingChange = (enabled: boolean) => {
     setExtendedThinking(enabled);
-    AIService.setExtendedThinking(enabled);
   };
 
   const handleConcurrencyChange = (level: ConcurrencyLevel) => {
@@ -152,7 +143,7 @@ function App() {
     }
 
     if (!apiKey) {
-      alert('Please enter your API key first');
+      alert('Please enter your Anthropic API key first');
       return;
     }
 
@@ -163,6 +154,10 @@ function App() {
       setProcessingStatus('parsing');
       setProgressCurrent(0);
       setProgressTotal(0);
+      setExtractedCandidates([]);
+      setFailedExtractions([]);
+      setTotalCost(0);
+      setTotalTokens(0);
 
       const allCVs: any[] = [];
 
@@ -258,7 +253,9 @@ function App() {
   const bgColor = actualTheme === 'dark' ? '#2a2a2a' : '#fefdfb';
   const textColor = actualTheme === 'dark' ? '#e0e0e0' : '#2a2a2a';
 
-  const canProcess = uploadedFiles.length > 0 && apiKey && processingStatus === 'idle';
+  // Allow re-running after a finished or failed run (e.g. after fixing the API key or switching model)
+  const canProcess = uploadedFiles.length > 0 && apiKey &&
+    (processingStatus === 'idle' || processingStatus === 'done' || processingStatus === 'error');
 
   return (
     <div className="container">
@@ -289,12 +286,10 @@ function App() {
 
       <LlmKeyInput
         existingKey={apiKey}
-        provider={aiProvider}
         anthropicModel={anthropicModel}
         extendedThinking={extendedThinking}
         onSave={handleSaveApiKey}
         onRemove={handleRemoveApiKey}
-        onProviderChange={handleProviderChange}
         onModelChange={handleModelChange}
         onExtendedThinkingChange={handleExtendedThinkingChange}
         theme={actualTheme}
@@ -320,8 +315,6 @@ function App() {
         parseMode={parseMode}
       />
 
-      {/* AI Model Selector Removed since it's hardcoded to Flash now to simplify UI */}
-      
       <ProgressIndicator
         status={processingStatus}
         current={progressCurrent}
@@ -377,7 +370,7 @@ function App() {
               color: textColor,
             }}
           >
-            💡 Cost per CV: ${(totalCost / extractedCandidates.length).toFixed(4)} • Model: {aiProvider === 'anthropic' ? anthropicModel : 'GPT-4 Turbo'}
+            💡 Cost per CV: ${(totalCost / extractedCandidates.length).toFixed(4)} • Model: {anthropicModel}
           </div>
         </div>
       )}

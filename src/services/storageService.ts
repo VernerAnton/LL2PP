@@ -1,10 +1,12 @@
 // localStorage/sessionStorage wrapper with type safety
 
-import type { ParseMode, AiProvider, AnthropicModel, ConcurrencyLevel } from '../types';
+import type { ParseMode, AnthropicModel, ConcurrencyLevel } from '../types';
+
+// Keys written by older versions of the app that are no longer used
+const LEGACY_KEYS = ['ll2lo_ai_provider'] as const;
 
 const STORAGE_KEYS = {
   API_KEY: 'll2lo_api_key',
-  AI_PROVIDER: 'll2lo_ai_provider',
   ANTHROPIC_MODEL: 'll2lo_anthropic_model',
   CONCURRENCY_LEVEL: 'll2lo_concurrency_level',
   THEME: 'theme',
@@ -12,6 +14,13 @@ const STORAGE_KEYS = {
 } as const;
 
 export class StorageService {
+  /**
+   * Remove settings left behind by older versions of the app
+   */
+  static removeLegacyKeys(): void {
+    LEGACY_KEYS.forEach((key) => localStorage.removeItem(key));
+  }
+
   /**
    * Save API key to localStorage
    */
@@ -31,22 +40,6 @@ export class StorageService {
    */
   static removeApiKey(): void {
     localStorage.removeItem(STORAGE_KEYS.API_KEY);
-  }
-
-  /**
-   * Save AI provider preference to localStorage
-   */
-  static saveAiProvider(provider: AiProvider): void {
-    localStorage.setItem(STORAGE_KEYS.AI_PROVIDER, provider);
-  }
-
-  /**
-   * Get AI provider preference from localStorage
-   * Defaults to 'anthropic' for first-time users
-   */
-  static getAiProvider(): AiProvider {
-    const stored = localStorage.getItem(STORAGE_KEYS.AI_PROVIDER);
-    return (stored === 'openai' || stored === 'anthropic') ? stored : 'anthropic';
   }
 
   /**
@@ -143,7 +136,7 @@ export class StorageService {
 
   /**
    * Get concurrency level preference
-   * Defaults to 1 (safest for free tier / Tier 1 - prevents 429 errors)
+   * Defaults to 1 (safest for low API usage tiers - prevents 429 errors)
    */
   static getConcurrencyLevel(): ConcurrencyLevel {
     const stored = localStorage.getItem(STORAGE_KEYS.CONCURRENCY_LEVEL);
@@ -155,7 +148,7 @@ export class StorageService {
    * Clear all app data from storage
    */
   static clearAll(): void {
-    Object.values(STORAGE_KEYS).forEach(key => {
+    [...Object.values(STORAGE_KEYS), ...LEGACY_KEYS].forEach(key => {
       localStorage.removeItem(key);
     });
   }

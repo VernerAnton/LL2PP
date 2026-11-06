@@ -5,16 +5,11 @@ export type ActualTheme = 'light' | 'dark'; // What actually gets applied to UI
 
 export type ProcessingStatus = 'idle' | 'parsing' | 'extracting' | 'generating' | 'done' | 'error';
 
-// AI Provider types
-export type AiProvider = 'openai' | 'anthropic';
-
-export type OpenAIModel = 'gpt-4' | 'gpt-4-turbo' | 'gpt-3.5-turbo';
+// Claude models offered in the model picker
 export type AnthropicModel =
   | 'claude-haiku-5-5'   // Haiku 5.5 - Fastest, cheapest ($0.10/1M in, $0.50/1M out; prompts up to 100K tokens)
   | 'claude-sonnet-5-5'  // Sonnet 5.5 - Latest balanced ($2/1M in, $10/1M out)
   | 'claude-opus-5-5';   // Opus 5.5 - Most capable ($4/1M in, $20/1M out)
-
-export type OutputMethod = 'slides' | 'manual';
 
 export type ParseMode = 'longlist' | 'individual';
 
@@ -50,19 +45,4 @@ export interface ProcessingError {
   candidateName?: string;
   error: string;
   rawText?: string;
-}
-
-export interface AppState {
-  theme: Theme;
-  apiKey: string | null;
-  aiProvider: AiProvider;
-  outputMethod: OutputMethod;
-  uploadedFile: File | null;
-  processingStatus: ProcessingStatus;
-  parsedCVs: ParsedCV[];
-  extractedCandidates: CandidateData[];
-  failedExtractions: ProcessingError[];
-  progressCurrent: number;
-  progressTotal: number;
-  generatedSlidesUrl: string | null;
 }
