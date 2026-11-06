@@ -2,7 +2,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import { z } from 'zod';
-import type { CandidateData, WorkExperience, Education, AnthropicModel } from '../types';
+import type { CandidateData, WorkExperience, Education } from '../types';
 import { RateLimiter } from './rateLimiter';
 
 // Space out request starts (1 per second) so bursts don't trip per-minute rate limits.
@@ -32,11 +32,16 @@ const CVDataSchema = z.object({
 
 type CVData = z.infer<typeof CVDataSchema>;
 
-// Per-1M-token prices (USD) used for the cost estimate shown in the UI
+// The app always uses the newest Claude Sonnet the API key can access (looked up via the
+// Models API). This is the known-good model used if that lookup fails or the newest model
+// rejects the request.
+const FALLBACK_MODEL = 'claude-sonnet-5-5';
+
+// Per-1M-token prices (USD) for the cost estimate shown in the UI. The Models API doesn't
+// report prices, so a newer Sonnet not listed here is estimated at Sonnet 5.5 rates.
 const PRICING: Record<string, { input: number; output: number }> = {
-  // Haiku 5.5 rates apply to prompts up to 100K tokens ($0.50/$2.50 beyond) — CV prompts stay well under
-  'claude-haiku-5-5': { input: 0.10, output: 0.50 },
   'claude-sonnet-5-5': { input: 2.00, output: 10.00 },
+  // Server-side refusal fallbacks may hand a request to another model
   'claude-opus-5-5': { input: 4.00, output: 20.00 },
 };
 
@@ -75,7 +80,9 @@ export interface ExtractionResult {
 
 export class AIService {
   private static client: Anthropic | null = null;
-  private static anthropicModel: AnthropicModel = 'claude-sonnet-5-5';
+  private static apiKey: string | null = null;
+  // Newest compatible Sonnet, looked up once per API key
+  private static model: Promise<string> | null = null;
   private static extendedThinking: boolean = false;
   // Retries for answers that fail validation. API errors (429, 5xx, network) are retried
   // inside the SDK, which honours the API's retry-after header.
@@ -85,6 +92,9 @@ export class AIService {
    * Set the Anthropic API key (null clears it)
    */
   static setApiKey(key: string | null): void {
+    if (key === this.apiKey) return;
+    this.apiKey = key;
+    this.model = null;
     // BYOK: the user's own key is used directly from their browser; it never touches our servers.
     this.client = key
       ? new Anthropic({ apiKey: key, dangerouslyAllowBrowser: true, maxRetries: 3 })
@@ -92,10 +102,46 @@ export class AIService {
   }
 
   /**
-   * Set the Claude model (Haiku, Sonnet, or Opus)
+   * The model extraction runs on: the newest active Claude Sonnet that supports everything
+   * the request uses. Looked up once per API key, so a new Sonnet release is picked up
+   * automatically on the next page load.
    */
-  static setAnthropicModel(model: AnthropicModel): void {
-    this.anthropicModel = model;
+  static getModel(): Promise<string> {
+    if (!this.client) return Promise.resolve(FALLBACK_MODEL);
+    if (!this.model) this.model = this.findNewestSonnet(this.client);
+    return this.model;
+  }
+
+  private static async findNewestSonnet(client: Anthropic): Promise<string> {
+    try {
+      const sonnets: Anthropic.ModelInfo[] = [];
+      for await (const model of client.models.list()) {
+        if (model.line === 'sonnet' && model.lifecycle === 'active' && this.isCompatible(model)) {
+          sonnets.push(model);
+        }
+      }
+      sonnets.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+      const newest = sonnets[0]?.id ?? FALLBACK_MODEL;
+      console.log(`🤖 Using model: ${newest}`);
+      return newest;
+    } catch (error) {
+      console.warn(`⚠️ Could not look up the newest Sonnet, using ${FALLBACK_MODEL}:`, error);
+      return FALLBACK_MODEL;
+    }
+  }
+
+  /**
+   * Whether a model supports the features the extraction request relies on
+   */
+  private static isCompatible(model: Anthropic.ModelInfo): boolean {
+    const caps = model.capabilities;
+    if (!caps) return false;
+    return (
+      caps.structured_outputs.supported &&
+      caps.thinking.types.adaptive.supported &&
+      caps.effort.low.supported &&
+      caps.effort.high.supported
+    );
   }
 
   /**
@@ -127,11 +173,20 @@ export class AIService {
     let lastError = 'Unknown error';
 
     for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+      const model = await this.getModel();
       try {
-        return await this.performExtraction(client, cvText);
+        return await this.performExtraction(client, model, cvText);
       } catch (error) {
         lastError = this.describeError(error);
         console.error(`❌ Extraction attempt ${attempt} failed:`, lastError);
+
+        // A newer Sonnet may not accept a request built for Sonnet 5.5. Switch to the
+        // known-good model for the rest of the session and try again.
+        if (error instanceof Anthropic.BadRequestError && model !== FALLBACK_MODEL) {
+          console.warn(`⚠️ ${model} rejected the request; switching to ${FALLBACK_MODEL}`);
+          this.model = Promise.resolve(FALLBACK_MODEL);
+          continue;
+        }
 
         // The SDK has already retried transient API errors; anything left (bad key,
         // bad request, exhausted retries) won't be fixed by trying again.
@@ -145,13 +200,9 @@ export class AIService {
   /**
    * Call Claude and turn the response into candidate data
    */
-  private static async performExtraction(client: Anthropic, cvText: string): Promise<ExtractionResult> {
-    // Sonnet 5.5 / Opus 5.5: if a safety classifier declines a CV by mistake, the API retries it
-    // on a fallback model within the same call. Haiku 5.5 has no server-side fallback.
-    const fallback = this.anthropicModel !== 'claude-haiku-5-5';
-
+  private static async performExtraction(client: Anthropic, model: string, cvText: string): Promise<ExtractionResult> {
     const response = await client.beta.messages.parse({
-      model: this.anthropicModel,
+      model,
       // Leaves room for thinking tokens as well as the JSON answer
       max_tokens: 16000,
       system: SYSTEM_PROMPT,
@@ -162,7 +213,10 @@ export class AIService {
         effort: this.extendedThinking ? 'high' : 'low',
         format: betaZodOutputFormat(CVDataSchema),
       },
-      ...(fallback ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {}),
+      // If a safety classifier declines a CV by mistake, the API retries it on a
+      // fallback model within the same call instead of failing.
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
     });
 
     if (response.stop_reason === 'refusal') {
@@ -198,7 +252,7 @@ export class AIService {
    * Calculate estimated cost in USD
    */
   private static calculateCost(model: string, inputTokens: number, outputTokens: number): number {
-    const rates = PRICING[model] ?? PRICING[this.anthropicModel];
+    const rates = PRICING[model] ?? PRICING[FALLBACK_MODEL];
     return (inputTokens / 1_000_000) * rates.input + (outputTokens / 1_000_000) * rates.output;
   }
 
@@ -257,7 +311,7 @@ export class AIService {
       return 'Invalid API key. Check the key in the API key section.';
     }
     if (error instanceof Anthropic.PermissionDeniedError) {
-      return 'This API key does not have access to the selected model.';
+      return 'This API key does not have access to Claude Sonnet.';
     }
     if (error instanceof Anthropic.RateLimitError) {
       return 'Rate limit reached. Lower the concurrency level or try again in a minute.';

@@ -11,14 +11,14 @@ import { GenerateButton } from './components/GenerateButton';
 import { StorageService } from './services/storageService';
 import { PDFService } from './services/pdfService';
 import { AIService } from './services/aiService';
-import type { Theme, ActualTheme, ProcessingStatus, CandidateData, ProcessingError, ParseMode, AnthropicModel, ConcurrencyLevel } from './types';
+import type { Theme, ActualTheme, ProcessingStatus, CandidateData, ProcessingError, ParseMode, ConcurrencyLevel } from './types';
 
 function App() {
   const [themePreference, setThemePreference] = useState<Theme>(() => StorageService.getTheme());
   const [actualTheme, setActualTheme] = useState<ActualTheme>(() => StorageService.getActualTheme());
 
   const [apiKey, setApiKey] = useState<string | null>(() => StorageService.getApiKey());
-  const [anthropicModel, setAnthropicModel] = useState<AnthropicModel>(() => StorageService.getAnthropicModel());
+  const [activeModel, setActiveModel] = useState<string | null>(null);
   const [extendedThinking, setExtendedThinking] = useState(false);
 
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
@@ -41,17 +41,24 @@ function App() {
   // Ref to track if extraction should be cancelled
   const cancelExtractionRef = useRef(false);
 
-  // Clean up settings from older versions (e.g. the removed OpenAI provider)
+  // Clean up settings from older versions (e.g. the removed OpenAI provider and model picker)
   useEffect(() => {
     StorageService.removeLegacyKeys();
   }, []);
 
-  // Keep AIService in sync with the current settings
+  // Keep AIService in sync with the API key, and show which Sonnet it will use
   useEffect(() => {
     AIService.setApiKey(apiKey);
-    AIService.setAnthropicModel(anthropicModel);
+    setActiveModel(null);
+    if (!apiKey) return;
+    let current = true;
+    AIService.getModel().then((model) => { if (current) setActiveModel(model); });
+    return () => { current = false; };
+  }, [apiKey]);
+
+  useEffect(() => {
     AIService.setExtendedThinking(extendedThinking);
-  }, [apiKey, anthropicModel, extendedThinking]);
+  }, [extendedThinking]);
 
   useEffect(() => {
     document.body.className = `${actualTheme}-mode`;
@@ -89,11 +96,6 @@ function App() {
   const handleRemoveApiKey = () => {
     setApiKey(null);
     StorageService.removeApiKey();
-  };
-
-  const handleModelChange = (model: AnthropicModel) => {
-    setAnthropicModel(model);
-    StorageService.saveAnthropicModel(model);
   };
 
   const handleExtendedThinkingChange = (enabled: boolean) => {
@@ -241,6 +243,8 @@ function App() {
       setExtractedCandidates(candidates);
       setFailedExtractions(errors);
       setProcessingStatus('done');
+      // Reflect a switch to the fallback model, if the newest Sonnet rejected the request
+      AIService.getModel().then(setActiveModel);
 
     } catch (error) {
       console.error('❌ Error during processing:', error);
@@ -286,11 +290,10 @@ function App() {
 
       <LlmKeyInput
         existingKey={apiKey}
-        anthropicModel={anthropicModel}
+        activeModel={activeModel}
         extendedThinking={extendedThinking}
         onSave={handleSaveApiKey}
         onRemove={handleRemoveApiKey}
-        onModelChange={handleModelChange}
         onExtendedThinkingChange={handleExtendedThinkingChange}
         theme={actualTheme}
       />
@@ -370,7 +373,7 @@ function App() {
               color: textColor,
             }}
           >
-            💡 Cost per CV: ${(totalCost / extractedCandidates.length).toFixed(4)} • Model: {anthropicModel}
+            💡 Cost per CV: ${(totalCost / extractedCandidates.length).toFixed(4)} • Model: {activeModel ?? 'Claude Sonnet'}
           </div>
         </div>
       )}

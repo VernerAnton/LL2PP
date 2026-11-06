@@ -1,30 +1,22 @@
 import { useState } from 'react';
-import type { ActualTheme, AnthropicModel } from '../types';
-
-const MODELS: { id: AnthropicModel; label: string; description: string }[] = [
-  { id: 'claude-haiku-5-5', label: 'HAIKU 5.5', description: '⚡ Haiku 5.5 - Fastest & Cheapest ($0.10/1M in, $0.50/1M out)' },
-  { id: 'claude-sonnet-5-5', label: 'SONNET 5.5', description: '⚖️ Sonnet 5.5 - Balanced, recommended ($2/1M in, $10/1M out)' },
-  { id: 'claude-opus-5-5', label: 'OPUS 5.5', description: '🧠 Opus 5.5 - Most Capable ($4/1M in, $20/1M out)' },
-];
+import type { ActualTheme } from '../types';
 
 interface LlmKeyInputProps {
   existingKey: string | null;
-  anthropicModel: AnthropicModel;
+  activeModel: string | null; // model in use, once looked up
   extendedThinking: boolean;
   onSave: (key: string) => void;
   onRemove: () => void;
-  onModelChange: (model: AnthropicModel) => void;
   onExtendedThinkingChange: (enabled: boolean) => void;
   theme: ActualTheme;
 }
 
 export function LlmKeyInput({
   existingKey,
-  anthropicModel,
+  activeModel,
   extendedThinking,
   onSave,
   onRemove,
-  onModelChange,
   onExtendedThinkingChange,
   theme,
 }: LlmKeyInputProps) {
@@ -70,7 +62,7 @@ export function LlmKeyInput({
         [ CLAUDE API CONFIGURATION ]
       </div>
 
-      {/* Model Selection */}
+      {/* Model (always the newest Sonnet) */}
       <div style={{ marginBottom: '1rem' }}>
         <label
           style={{
@@ -83,26 +75,15 @@ export function LlmKeyInput({
         >
           MODEL:
         </label>
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          {MODELS.map((model) => (
-            <button
-              key={model.id}
-              onClick={() => onModelChange(model.id)}
-              style={{
-                padding: '0.5rem 1rem',
-                background: anthropicModel === model.id ? textColor : 'none',
-                border: `2px solid ${borderColor}`,
-                color: anthropicModel === model.id ? bgColor : textColor,
-                fontFamily: 'Courier New, monospace',
-                fontWeight: 'bold',
-                cursor: 'pointer',
-                letterSpacing: '0.1em',
-                fontSize: '0.75rem',
-              }}
-            >
-              [ {model.label} ]
-            </button>
-          ))}
+        <div
+          style={{
+            fontSize: '0.75rem',
+            fontFamily: 'Courier New, monospace',
+            fontWeight: 'bold',
+            color: textColor,
+          }}
+        >
+          CLAUDE SONNET (NEWEST){activeModel ? ` → ${activeModel}` : ''}
         </div>
         <div
           style={{
@@ -112,7 +93,7 @@ export function LlmKeyInput({
             color: textColor,
           }}
         >
-          {MODELS.find((model) => model.id === anthropicModel)?.description}
+          ⚖️ Automatically uses the latest Sonnet release available to your API key
         </div>
 
         {/* Extended Thinking Toggle */}
@@ -128,7 +109,7 @@ export function LlmKeyInput({
               EXTENDED THINKING:
             </label>
             <span
-              title="Enables deeper reasoning before extracting CV data. Recommended for personal CVs with unusual formatting, non-standard date formats, or ambiguous role titles. Has no benefit for clean, consistently-formatted exports. Increases token usage and processing time per CV."
+              title="Enables deeper reasoning before extracting CV data. Recommended for complex individual CVs with unusual formatting, non-standard date formats, or ambiguous role titles. Has no benefit for clean, consistently-formatted longlist exports. Increases token usage and processing time per CV."
               style={{ cursor: 'help', fontSize: '0.75rem', opacity: 0.6, color: textColor }}
             >
               ⓘ

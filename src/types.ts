@@ -5,12 +5,6 @@ export type ActualTheme = 'light' | 'dark'; // What actually gets applied to UI
 
 export type ProcessingStatus = 'idle' | 'parsing' | 'extracting' | 'generating' | 'done' | 'error';
 
-// Claude models offered in the model picker
-export type AnthropicModel =
-  | 'claude-haiku-5-5'   // Haiku 5.5 - Fastest, cheapest ($0.10/1M in, $0.50/1M out; prompts up to 100K tokens)
-  | 'claude-sonnet-5-5'  // Sonnet 5.5 - Latest balanced ($2/1M in, $10/1M out)
-  | 'claude-opus-5-5';   // Opus 5.5 - Most capable ($4/1M in, $20/1M out)
-
 export type ParseMode = 'longlist' | 'individual';
 
 // Concurrency level for parallel API requests (1-5)
