@@ -8,6 +8,9 @@ import { FileUploader } from './components/FileUploader';
 import { ProgressIndicator } from './components/ProgressIndicator';
 import { ManualCopyOutput } from './components/ManualCopyOutput';
 import { GenerateButton } from './components/GenerateButton';
+import { UpdatePrompt } from './components/UpdatePrompt';
+import { useAppUpdate } from './useAppUpdate';
+import { APP_VERSION } from './version';
 import { StorageService } from './services/storageService';
 import { PDFService } from './services/pdfService';
 import { AIService } from './services/aiService';
@@ -37,6 +40,9 @@ function App() {
 
   const [justReset, setJustReset] = useState(false);
   const [fileUploaderKey, setFileUploaderKey] = useState(0);
+
+  // Offers a reload when a newer build has been deployed (never reloads by itself)
+  const update = useAppUpdate();
 
   // Ref to track if extraction should be cancelled
   const cancelExtractionRef = useRef(false);
@@ -262,7 +268,8 @@ function App() {
     (processingStatus === 'idle' || processingStatus === 'done' || processingStatus === 'error');
 
   return (
-    <div className="container">
+    // Extra bottom space while the update prompt is up, so it can't cover the last controls
+    <div className="container" style={update.needRefresh ? { paddingBottom: '10rem' } : undefined}>
       <div className="header">
         <ThemeToggle
           themePreference={themePreference}
@@ -524,7 +531,25 @@ function App() {
 
       <div className="footer">
         [ ✅ PDF Parsing | ✅ AI Extraction | ✅ PPTX Generation | 🚀 App Ready! ]
+        <div
+          title={`Build ${__BUILD_COMMIT__} · ${__BUILD_TIME__}`}
+          style={{ marginTop: '0.75rem', fontWeight: 'bold', letterSpacing: '0.1em' }}
+        >
+          V{APP_VERSION}
+        </div>
+        <div style={{ marginTop: '0.25rem', fontSize: '0.7rem' }}>
+          build {__BUILD_COMMIT__} · {__BUILD_TIME__}
+        </div>
       </div>
+
+      {update.needRefresh && (
+        <UpdatePrompt
+          latestVersion={update.latestVersion}
+          onReload={update.updateApp}
+          onDismiss={update.dismiss}
+          theme={actualTheme}
+        />
+      )}
     </div>
   );
 }

@@ -12,6 +12,7 @@ LL2PP reads CV PDFs (one longlist PDF or individual CVs), uses Claude to extract
 - **Extended thinking** toggle for complex individual CVs (unusual layouts, ambiguous titles or dates).
 - **PowerPoint output** generated client-side with PptxGenJS, using the template images in `public/assets/`.
 - **Cost tracking**: token usage and estimated cost per run.
+- **Version stamp and update notice**: the footer shows the app version (`V1`, …) and build. If a newer build is deployed while the app is open, it offers a reload instead of leaving you on the old build.
 - **Private by design**: no backend. CVs and your API key stay in your browser and are only sent to the Anthropic API.
 
 ## Using it
@@ -32,7 +33,7 @@ npm run build    # type-check and production build into dist/
 npm run preview  # serve the production build
 ```
 
-Pushing to `main` deploys to GitHub Pages via `.github/workflows/deploy.yml`.
+Pushing to `main` deploys to GitHub Pages via `.github/workflows/deploy.yml`. Bump `APP_VERSION` in `src/version.ts` with every change that ships.
 
 ## Project structure
 
