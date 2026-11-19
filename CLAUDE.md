@@ -22,4 +22,7 @@ before adding a service worker.
 
 - Claude is the only AI provider. The app always uses the newest active Claude Sonnet, looked up via
   the Models API, falling back to `claude-sonnet-5-5` (`src/services/aiService.ts`).
+- Extra details (location etc.) are a fixed picklist in `src/services/extraDetails.ts`, max 3 per run, not
+  saved between loads. Free-text fields were tried and replaced on purpose (too prone to user error); add new
+  options to that list instead.
 - `dist/` is old build output still tracked in git; deploys build in CI. Don't commit rebuilt `dist/` files.

@@ -96,7 +96,7 @@ export function LlmKeyInput({
           ⚖️ Automatically uses the latest Sonnet release available to your API key
         </div>
 
-        {/* Extended Thinking Toggle */}
+        {/* Deeper Reasoning Toggle (low vs high effort) */}
         <div style={{ marginTop: '0.75rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
             <label
@@ -106,10 +106,10 @@ export function LlmKeyInput({
                 color: textColor,
               }}
             >
-              EXTENDED THINKING:
+              DEEPER REASONING:
             </label>
             <span
-              title="Enables deeper reasoning before extracting CV data. Recommended for complex individual CVs with unusual formatting, non-standard date formats, or ambiguous role titles. Has no benefit for clean, consistently-formatted longlist exports. Increases token usage and processing time per CV."
+              title="Has Claude reason more carefully before extracting CV data (high effort instead of low). Recommended for complex individual CVs with unusual formatting, non-standard date formats, or ambiguous role titles. Has no benefit for clean, consistently-formatted longlist exports. Increases token usage and processing time per CV."
               style={{ cursor: 'help', fontSize: '0.75rem', opacity: 0.6, color: textColor }}
             >
               ⓘ
@@ -140,8 +140,8 @@ export function LlmKeyInput({
             }}
           >
             {extendedThinking
-              ? '🧠 Extended thinking ON — deeper reasoning, higher token usage (high effort)'
-              : '💡 Extended thinking OFF — low effort, fastest and cheapest'}
+              ? '🧠 Deeper reasoning ON — more careful, slower, higher token usage'
+              : '💡 Deeper reasoning OFF — quick reasoning, fastest and cheapest'}
           </div>
         </div>
       </div>

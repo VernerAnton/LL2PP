@@ -31,6 +31,10 @@ export function ManualCopyOutput({ candidates, theme }: ManualCopyOutputProps) {
 
     // Name
     lines.push(candidate.name);
+    // Extra details requested for this run (e.g. Location: Helsinki)
+    candidate.extras?.forEach(extra => {
+      if (extra.value) lines.push(`${extra.label}: ${extra.value}`);
+    });
     lines.push('');
 
     // Work History

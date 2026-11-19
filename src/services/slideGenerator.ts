@@ -149,28 +149,41 @@ export class SlideGenerator {
 
     // --- RIGHT COLUMN: NAME + EXPERIENCE ---
 
-    // A. NAME (top of right column, in CAPS and bold)
-    // Fixed 13pt font - does NOT shrink to maintain prominence
-    slide.addText(candidate.name.toUpperCase(), {
-      x: slot.experience.x,
-      y: slot.experience.y,
-      w: slot.experience.w,
-      h: 0.25,
-      fontSize: fonts.name,
-      color: this.hexToRgb(colors.name),
-      bold: true,
-      wrap: true,
-      valign: 'top',
-      margin: 0  // Remove default padding to prevent coordinate shifting
-    });
+    // A. NAME (top of right column, in CAPS and bold), followed on the same line by any
+    // extra details requested for this run: "JANE DOE · Helsinki"
+    // Fixed 13pt font for the name - does NOT shrink to maintain prominence
+    const extrasText = (candidate.extras ?? [])
+      .map(e => e.value)
+      .filter(Boolean)
+      .join(' · ');
+    const nameLine = this.layoutNameLine(candidate.name.toUpperCase(), extrasText, slot.experience.w);
+
+    slide.addText(
+      [
+        { text: candidate.name.toUpperCase(), options: { bold: true, fontSize: fonts.name } },
+        ...(extrasText
+          ? [{ text: `  ·  ${extrasText}`, options: { bold: false, fontSize: nameLine.extrasFontSize } }]
+          : []),
+      ],
+      {
+        x: slot.experience.x,
+        y: slot.experience.y,
+        w: slot.experience.w,
+        h: nameLine.height,
+        color: this.hexToRgb(colors.name),
+        wrap: true,
+        valign: 'top',
+        margin: 0  // Remove default padding to prevent coordinate shifting
+      }
+    );
 
     // B. WORK HISTORY (Bulleted List below name)
     // Starts at 10pt, automatically shrinks if content is too long (min 6pt)
     slide.addText(experienceText, {
       x: slot.experience.x,
-      y: slot.experience.y + 0.30,
+      y: slot.experience.y + nameLine.height + 0.05,
       w: slot.experience.w,
-      h: slot.experience.h - 0.35, // Use most of the box height minus name
+      h: slot.experience.h - nameLine.height - 0.10, // Use most of the box height minus name
       fontSize: fonts.experience,
       color: this.hexToRgb(colors.experience),
       bullet: true,
@@ -180,6 +193,49 @@ export class SlideGenerator {
       valign: 'top',
       margin: 0  // Remove default padding to prevent coordinate shifting
     });
+  }
+
+  /**
+   * Decide how the name line fits: shrink the extra details (10pt down to 7pt) so the line
+   * stays on one line, and if even that won't fit, let it wrap onto a second line and
+   * report the taller height so the work history moves down instead of being overlapped.
+   */
+  private static layoutNameLine(name: string, extrasText: string, widthInches: number) {
+    const ONE_LINE = 0.25; // inches - the original name box height
+    const TWO_LINES = 0.45;
+    if (!extrasText) return { extrasFontSize: 10, height: ONE_LINE };
+
+    // 6% safety margin for differences between browser and PowerPoint text rendering
+    const available = widthInches * 72 * 0.94; // points
+    const nameWidth = this.measureText(name, layoutConfig.fonts.name, true);
+
+    for (let size = 10; size >= 7; size--) {
+      if (nameWidth + this.measureText(`  ·  ${extrasText}`, size, false) <= available) {
+        return { extrasFontSize: size, height: ONE_LINE };
+      }
+    }
+    return { extrasFontSize: 9, height: TWO_LINES };
+  }
+
+  private static measureContext: CanvasRenderingContext2D | null | undefined;
+
+  /**
+   * Width of a piece of text in points, measured in the deck's font (Calibri, from the
+   * theme). Where Calibri isn't installed the browser measures a wider fallback font,
+   * which errs on the side of shrinking or wrapping rather than overflowing.
+   */
+  private static measureText(text: string, sizePt: number, bold: boolean): number {
+    if (this.measureContext === undefined) {
+      this.measureContext = document.createElement('canvas').getContext('2d');
+    }
+    const ctx = this.measureContext;
+    if (!ctx) {
+      // No canvas: conservative average character widths
+      return text.length * sizePt * (bold ? 0.72 : 0.52);
+    }
+    // Canvas works in CSS px at 96 per inch; points are 72 per inch
+    ctx.font = `${bold ? 'bold ' : ''}${sizePt}pt Calibri, Carlito, Arial, sans-serif`;
+    return ctx.measureText(text).width * 0.75;
   }
 
   /**

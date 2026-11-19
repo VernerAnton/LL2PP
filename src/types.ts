@@ -22,10 +22,18 @@ export interface Education {
   dates?: string; // Format: "MM/YYYY - MM/YYYY"
 }
 
+// An extra detail requested for one longlist, e.g. { label: 'Location', value: 'Helsinki' }.
+// value is '' when the CV doesn't state it.
+export interface ExtraDetail {
+  label: string;
+  value: string;
+}
+
 export interface CandidateData {
   name: string;
   workHistory: WorkExperience[];
   education: Education[];
+  extras?: ExtraDetail[]; // Only present when extra details were requested for the run
   rawText?: string; // Original CV text for debugging
 }
 
