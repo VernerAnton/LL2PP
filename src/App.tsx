@@ -5,7 +5,7 @@ import { LlmKeyInput } from './components/LlmKeyInput';
 import { ParseModeSelector } from './components/ParseModeSelector';
 import { ConcurrencySelector } from './components/ConcurrencySelector';
 import { ExtraDetailsInput } from './components/ExtraDetailsInput';
-import { shortLabel } from './services/extraDetails';
+import { selectedExtraFields, type ExtraFieldId } from './services/extraDetails';
 import { FileUploader } from './components/FileUploader';
 import { ProgressIndicator } from './components/ProgressIndicator';
 import { ManualCopyOutput } from './components/ManualCopyOutput';
@@ -37,7 +37,7 @@ function App() {
   const [parseMode, setParseMode] = useState<ParseMode>(() => StorageService.getParseMode());
   const [concurrencyLevel, setConcurrencyLevel] = useState<ConcurrencyLevel>(() => StorageService.getConcurrencyLevel());
   // Extra details (e.g. location) for this run only; deliberately not saved
-  const [extraFields, setExtraFields] = useState<string[]>([]);
+  const [extraFields, setExtraFields] = useState<ExtraFieldId[]>([]);
 
   const [totalCost, setTotalCost] = useState(0);
   const [totalTokens, setTotalTokens] = useState(0);
@@ -212,7 +212,7 @@ function App() {
         const batch = allCVs.slice(i, i + concurrencyLevel);
         const batchPromises = batch.map(async (cv, batchIndex) => {
           const globalIndex = i + batchIndex;
-          const result = await AIService.extractCVData(cv.text, extraFields);
+          const result = await AIService.extractCVData(cv.text, selectedExtraFields(extraFields));
 
           return {
             index: globalIndex,
@@ -323,8 +323,8 @@ function App() {
       />
 
       <ExtraDetailsInput
-        fields={extraFields}
-        onFieldsChange={setExtraFields}
+        selected={extraFields}
+        onSelectedChange={setExtraFields}
         disabled={processingStatus === 'parsing' || processingStatus === 'extracting'}
         theme={actualTheme}
       />
@@ -452,7 +452,7 @@ function App() {
             {processingStatus === 'extracting' ? 'Stop the current extraction' : 'Parse PDF(s) + Extract with AI'}
             {processingStatus !== 'extracting' && extraFields.length > 0 && (
               <div style={{ marginTop: '0.25rem' }}>
-                + extra details: {extraFields.map(shortLabel).join(', ')}
+                + extra details: {selectedExtraFields(extraFields).map((field) => field.label).join(', ')}
               </div>
             )}
           </div>
@@ -522,7 +522,7 @@ function App() {
                 <div style={{ marginBottom: '0.75rem' }}>
                   {candidate.extras.map((extra, xIdx) => (
                     <div key={xIdx} style={{ fontSize: '0.75rem', marginBottom: '0.25rem', color: textColor, opacity: 0.8 }}>
-                      <span style={{ fontWeight: 'bold' }}>{shortLabel(extra.label).toUpperCase()}:</span>{' '}
+                      <span style={{ fontWeight: 'bold' }}>{extra.label.toUpperCase()}:</span>{' '}
                       {extra.value || <span style={{ opacity: 0.6 }}>not stated in CV</span>}
                     </div>
                   ))}

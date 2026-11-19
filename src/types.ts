@@ -22,7 +22,7 @@ export interface Education {
   dates?: string; // Format: "MM/YYYY - MM/YYYY"
 }
 
-// An extra detail requested for one longlist, e.g. { label: 'Location (town or city only)', value: 'Helsinki' }.
+// An extra detail requested for one longlist, e.g. { label: 'Location', value: 'Helsinki' }.
 // value is '' when the CV doesn't state it.
 export interface ExtraDetail {
   label: string;

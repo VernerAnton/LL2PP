@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import { z } from 'zod';
 import type { CandidateData, WorkExperience, Education, ExtraDetail } from '../types';
+import type { ExtraField } from './extraDetails';
 import { RateLimiter } from './rateLimiter';
 
 // Space out request starts (1 per second) so bursts don't trip per-minute rate limits.
@@ -30,28 +31,29 @@ const CVDataSchema = z.object({
   education: z.array(EducationSchema),
 });
 
-// Extra details requested for a run (e.g. location) come back as extra_1, extra_2, … so a
-// user-typed label never has to be a valid JSON key. '' means the CV doesn't state it.
+// Extra details requested for a run (e.g. location) come back in "extras", keyed by field id.
+// '' means the CV doesn't state it.
 type CVData = z.infer<typeof CVDataSchema> & { extras?: Record<string, string> };
 
-const extraKey = (index: number) => `extra_${index + 1}`;
-
-function buildSchema(extraFields: string[]) {
+function buildSchema(extraFields: ExtraField[]) {
   if (extraFields.length === 0) return CVDataSchema;
   return CVDataSchema.extend({
     extras: z.object(
-      Object.fromEntries(extraFields.map((label, i) => [extraKey(i), z.string().describe(label)]))
+      Object.fromEntries(extraFields.map((field) => [field.id, z.string().describe(field.instruction)]))
     ),
   });
 }
 
-function buildUserMessage(cvText: string, extraFields: string[]): string {
+function buildUserMessage(cvText: string, extraFields: ExtraField[]): string {
   if (extraFields.length === 0) return `Extract the candidate data from this CV:\n\n${cvText}`;
-  const fieldList = extraFields.map((label, i) => `- ${extraKey(i)}: ${label}`).join('\n');
+  const fieldList = extraFields.map((field) => `- ${field.id}: ${field.instruction}`).join('\n');
+  const today = new Date().toISOString().slice(0, 10);
   return `Extract the candidate data from this CV. For this longlist, also extract these extra details into "extras":
 ${fieldList}
 
-Give each as a short value, a few words at most, based only on what the CV states (the text in parentheses says what form to use). If the CV doesn't state it, use an empty string. Never guess.
+Each value is shown after the candidate's name on a slide, so keep it short and in exactly the form described. Base it only on what the CV states. If the CV doesn't give the information, use an empty string. Never guess.
+
+Today's date: ${today}
 
 CV:
 
@@ -183,7 +185,7 @@ export class AIService {
   /**
    * Extract structured data from a single CV text
    */
-  static async extractCVData(cvText: string, extraFields: string[] = []): Promise<ExtractionResult> {
+  static async extractCVData(cvText: string, extraFields: ExtraField[] = []): Promise<ExtractionResult> {
     if (!this.client) {
       return {
         success: false,
@@ -201,7 +203,7 @@ export class AIService {
   private static async extractWithRetry(
     client: Anthropic,
     cvText: string,
-    extraFields: string[]
+    extraFields: ExtraField[]
   ): Promise<ExtractionResult> {
     let lastError = 'Unknown error';
 
@@ -237,7 +239,7 @@ export class AIService {
     client: Anthropic,
     model: string,
     cvText: string,
-    extraFields: string[]
+    extraFields: ExtraField[]
   ): Promise<ExtractionResult> {
     const response = await client.beta.messages.parse({
       model,
@@ -297,7 +299,7 @@ export class AIService {
   /**
    * Clean the parsed data and map it to the app's candidate type
    */
-  private static toCandidateData(data: CVData, cvText: string, extraFields: string[]): CandidateData {
+  private static toCandidateData(data: CVData, cvText: string, extraFields: ExtraField[]): CandidateData {
     const workHistory: WorkExperience[] = this.filterBoardMemberRoles(
       data.workHistory.map((item) => ({
         company: item.company.trim(),
@@ -312,9 +314,9 @@ export class AIService {
       dates: item.dates?.trim() || undefined,
     }));
 
-    const extras: ExtraDetail[] = extraFields.map((label, i) => {
-      const value = (data.extras?.[extraKey(i)] ?? '').trim();
-      return { label, value: EMPTY_VALUES.test(value) ? '' : value };
+    const extras: ExtraDetail[] = extraFields.map((field) => {
+      const value = (data.extras?.[field.id] ?? '').trim();
+      return { label: field.label, value: EMPTY_VALUES.test(value) ? '' : value };
     });
 
     return {

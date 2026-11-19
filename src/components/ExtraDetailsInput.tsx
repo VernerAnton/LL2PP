@@ -1,57 +1,38 @@
-import { useState } from 'react';
 import type { ActualTheme } from '../types';
-import { LOCATION_FIELD, MAX_EXTRA_FIELDS, shortLabel } from '../services/extraDetails';
+import {
+  EXTRA_FIELDS,
+  MAX_SELECTED_EXTRAS,
+  selectedExtraFields,
+  type ExtraFieldId,
+} from '../services/extraDetails';
 
 interface ExtraDetailsInputProps {
-  fields: string[];
-  onFieldsChange: (fields: string[]) => void;
+  selected: ExtraFieldId[];
+  onSelectedChange: (selected: ExtraFieldId[]) => void;
   disabled: boolean;
   theme: ActualTheme;
 }
 
 /**
- * Optional extra details to pull from each CV for this run only (e.g. location).
- * Deliberately not saved: requests like this are rare and client-specific.
+ * Optional extra details to pull from each CV for this run only (e.g. location), picked from
+ * a fixed list. Deliberately not saved: requests like this are rare and client-specific.
  */
-export function ExtraDetailsInput({ fields, onFieldsChange, disabled, theme }: ExtraDetailsInputProps) {
-  const [inputValue, setInputValue] = useState('');
-
+export function ExtraDetailsInput({ selected, onSelectedChange, disabled, theme }: ExtraDetailsInputProps) {
   const borderColor = theme === 'dark' ? '#e0e0e0' : '#2a2a2a';
   const bgColor = theme === 'dark' ? '#2a2a2a' : '#fefdfb';
   const textColor = theme === 'dark' ? '#e0e0e0' : '#2a2a2a';
 
-  const isFull = fields.length >= MAX_EXTRA_FIELDS;
+  const isFull = selected.length >= MAX_SELECTED_EXTRAS;
 
-  const addField = (label: string) => {
-    const trimmed = label.trim();
-    if (!trimmed || isFull) return;
-    if (fields.some((f) => f.toLowerCase() === trimmed.toLowerCase())) return;
-    onFieldsChange([...fields, trimmed]);
+  const toggle = (id: ExtraFieldId) => {
+    if (selected.includes(id)) {
+      onSelectedChange(selected.filter((s) => s !== id));
+    } else if (!isFull) {
+      onSelectedChange([...selected, id]);
+    }
   };
 
-  const handleAdd = () => {
-    addField(inputValue);
-    setInputValue('');
-  };
-
-  const buttonStyle = (enabled: boolean) =>
-    ({
-      padding: '0.5rem 1rem',
-      background: 'none',
-      border: `2px solid ${borderColor}`,
-      color: textColor,
-      fontFamily: 'Courier New, monospace',
-      fontWeight: 'bold',
-      cursor: enabled ? 'pointer' : 'not-allowed',
-      letterSpacing: '0.1em',
-      fontSize: '0.75rem',
-      opacity: enabled ? 1 : 0.5,
-      whiteSpace: 'nowrap',
-    }) as const;
-
-  const canAdd = !disabled && !isFull && inputValue.trim().length > 0;
-  const hasLocation = fields.some((f) => f.toLowerCase() === LOCATION_FIELD.toLowerCase());
-  const canAddLocation = !disabled && !isFull && !hasLocation;
+  const preview = selectedExtraFields(selected).map((field) => field.example).join(' · ');
 
   return (
     <div
@@ -77,91 +58,55 @@ export function ExtraDetailsInput({ fields, onFieldsChange, disabled, theme }: E
       >
         <span>[ EXTRA DETAILS ]</span>
         <span
-          title="Extra things to pull from each CV for this longlist, such as location. Values are shown after the candidate's name on the slide. Text in parentheses tells Claude what form to use and isn't shown, e.g. 'Location (town or city only)'. If a CV doesn't mention it, it's left blank."
+          title="Extra things to pull from each CV for this longlist, such as location. They are shown after the candidate's name on the slide, in list order. If a CV doesn't mention one, it's left blank."
           style={{ cursor: 'help', fontSize: '0.875rem', opacity: 0.6 }}
         >
           ⓘ
         </span>
       </div>
       <div style={{ fontSize: '0.75rem', opacity: 0.7, marginBottom: '1rem', lineHeight: 1.4, color: textColor }}>
-        Optional, for this run only. Shown after the name on each slide. Cleared on reload or reset.
+        Optional, pick up to {MAX_SELECTED_EXTRAS}. For this run only, cleared on reload or reset.
       </div>
 
-      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: fields.length > 0 ? '1rem' : 0 }}>
-        <input
-          type="text"
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') handleAdd();
-          }}
-          disabled={disabled || isFull}
-          placeholder="e.g. Languages (spoken languages)"
-          style={{
-            flex: '1 1 200px',
-            minWidth: 0,
-            padding: '0.5rem 0.75rem',
-            border: `2px solid ${borderColor}`,
-            background: theme === 'dark' ? '#1a1a1a' : '#fff',
-            color: textColor,
-            fontFamily: 'Courier New, monospace',
-            fontSize: '0.875rem',
-          }}
-        />
-        <button onClick={handleAdd} disabled={!canAdd} style={buttonStyle(canAdd)}>
-          [ ADD ]
-        </button>
-        <button
-          onClick={() => addField(LOCATION_FIELD)}
-          disabled={!canAddLocation}
-          title={`Adds "${LOCATION_FIELD}"`}
-          style={buttonStyle(canAddLocation)}
-        >
-          [ + LOCATION ]
-        </button>
-      </div>
-
-      {fields.length > 0 && (
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          {fields.map((field) => (
-            <span
-              key={field}
-              title={field}
+      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+        {EXTRA_FIELDS.map((field) => {
+          const isSelected = selected.includes(field.id);
+          const enabled = !disabled && (isSelected || !isFull);
+          return (
+            <button
+              key={field.id}
+              onClick={() => toggle(field.id)}
+              disabled={!enabled}
+              aria-pressed={isSelected}
+              title={field.instruction}
               style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                padding: '0.35rem 0.5rem 0.35rem 0.75rem',
-                border: `1px solid ${borderColor}`,
-                background: theme === 'dark' ? '#1a1a1a' : '#fff',
-                color: textColor,
-                fontSize: '0.75rem',
+                padding: '0.5rem 1rem',
+                background: isSelected ? textColor : 'none',
+                border: `2px solid ${borderColor}`,
+                color: isSelected ? bgColor : textColor,
+                fontFamily: 'Courier New, monospace',
                 fontWeight: 'bold',
+                cursor: enabled ? 'pointer' : 'not-allowed',
+                letterSpacing: '0.1em',
+                fontSize: '0.75rem',
+                opacity: enabled ? 1 : 0.4,
               }}
             >
-              {shortLabel(field)}
-              <button
-                onClick={() => onFieldsChange(fields.filter((f) => f !== field))}
-                disabled={disabled}
-                aria-label={`Remove ${shortLabel(field)}`}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: textColor,
-                  cursor: disabled ? 'not-allowed' : 'pointer',
-                  fontFamily: 'Courier New, monospace',
-                  fontWeight: 'bold',
-                  fontSize: '0.875rem',
-                  padding: 0,
-                  lineHeight: 1,
-                }}
-              >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
+              [ {field.label.toUpperCase()} ]
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={{ fontSize: '0.65rem', opacity: 0.6, marginTop: '0.75rem', color: textColor }}>
+        {preview ? (
+          <>
+            On the slide: <span style={{ fontWeight: 'bold' }}>JANE DOE</span> · {preview}
+          </>
+        ) : (
+          'Nothing selected: slides show the usual details only.'
+        )}
+      </div>
     </div>
   );
 }
