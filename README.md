@@ -9,7 +9,7 @@ LL2PP reads CV PDFs (one longlist PDF or individual CVs), uses Claude to extract
 - **PDF parsing** in the browser with PDF.js. Longlist mode splits one PDF into CVs at each "Page 1 of …" marker; individual mode treats each PDF as one CV.
 - **Claude extraction** with structured outputs, so every answer is valid JSON in the expected shape. Board roles are excluded and dates normalised to `MM/YYYY - MM/YYYY` or `YYYY - YYYY`.
 - **Always the newest Claude Sonnet**: on startup the app asks the Anthropic Models API for the newest active Sonnet that supports what the app needs, so new Sonnet releases are picked up automatically. If the lookup fails or the new model rejects the request, it falls back to Claude Sonnet 5.5.
-- **Extended thinking** toggle for complex individual CVs (unusual layouts, ambiguous titles or dates).
+- **Deeper reasoning** toggle for complex individual CVs (unusual layouts, ambiguous titles or dates).
 - **PowerPoint output** generated client-side with PptxGenJS, using the template images in `public/assets/`.
 - **Cost tracking**: token usage and estimated cost per run.
 - **Version stamp and update notice**: the footer shows the app version (`V1`, …) and build. If a newer build is deployed while the app is open, it offers a reload instead of leaving you on the old build.
@@ -18,7 +18,7 @@ LL2PP reads CV PDFs (one longlist PDF or individual CVs), uses Claude to extract
 ## Using it
 
 1. Get an API key at [console.anthropic.com](https://console.anthropic.com).
-2. Open the app and paste the key. Turn on extended thinking if the CVs are complex.
+2. Open the app and paste the key. Turn on deeper reasoning if the CVs are complex.
 3. Choose longlist or individual mode and a concurrency level (1–2 for new accounts on API usage Tier 1).
 4. Upload the PDF(s), click **PROCESS CVs**, review the results, then **DOWNLOAD .PPTX**.
 

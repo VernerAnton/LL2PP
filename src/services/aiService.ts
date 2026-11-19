@@ -207,7 +207,7 @@ export class AIService {
       max_tokens: 16000,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: `Extract the candidate data from this CV:\n\n${cvText}` }],
-      // Claude 5.5 models think adaptively; effort sets how deep. Extended thinking = high effort.
+      // Claude 5.5 models think adaptively; effort sets how deep. The "deeper reasoning" toggle = high effort.
       ...(this.extendedThinking ? { thinking: { type: 'adaptive' as const } } : {}),
       output_config: {
         effort: this.extendedThinking ? 'high' : 'low',
