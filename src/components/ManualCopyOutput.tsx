@@ -7,6 +7,7 @@
 
 import { useState } from 'react';
 import type { CandidateData, ActualTheme } from '../types';
+import { shortLabel } from '../services/extraDetails';
 
 interface ManualCopyOutputProps {
   candidates: CandidateData[];
@@ -31,6 +32,10 @@ export function ManualCopyOutput({ candidates, theme }: ManualCopyOutputProps) {
 
     // Name
     lines.push(candidate.name);
+    // Extra details requested for this run (e.g. Location: Helsinki)
+    candidate.extras?.forEach(extra => {
+      if (extra.value) lines.push(`${shortLabel(extra.label)}: ${extra.value}`);
+    });
     lines.push('');
 
     // Work History

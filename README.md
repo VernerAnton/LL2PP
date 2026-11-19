@@ -10,6 +10,7 @@ LL2PP reads CV PDFs (one longlist PDF or individual CVs), uses Claude to extract
 - **Claude extraction** with structured outputs, so every answer is valid JSON in the expected shape. Board roles are excluded and dates normalised to `MM/YYYY - MM/YYYY` or `YYYY - YYYY`.
 - **Always the newest Claude Sonnet**: on startup the app asks the Anthropic Models API for the newest active Sonnet that supports what the app needs, so new Sonnet releases are picked up automatically. If the lookup fails or the new model rejects the request, it falls back to Claude Sonnet 5.5.
 - **Deeper reasoning** toggle for complex individual CVs (unusual layouts, ambiguous titles or dates).
+- **Extra details** for one-off client requests: add fields such as location (one click) or anything typed, e.g. `Languages (spoken languages)`. Claude extracts them for every CV and they appear after the name on the slide (**JANE DOE** · Helsinki). Text in parentheses guides Claude and isn't shown. The list starts empty on every page load.
 - **PowerPoint output** generated client-side with PptxGenJS, using the template images in `public/assets/`.
 - **Cost tracking**: token usage and estimated cost per run.
 - **Version stamp and update notice**: the footer shows the app version (`V1`, …) and build. If a newer build is deployed while the app is open, it offers a reload instead of leaving you on the old build.

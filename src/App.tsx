@@ -4,6 +4,8 @@ import { ThemeToggle } from './components/ThemeToggle';
 import { LlmKeyInput } from './components/LlmKeyInput';
 import { ParseModeSelector } from './components/ParseModeSelector';
 import { ConcurrencySelector } from './components/ConcurrencySelector';
+import { ExtraDetailsInput } from './components/ExtraDetailsInput';
+import { shortLabel } from './services/extraDetails';
 import { FileUploader } from './components/FileUploader';
 import { ProgressIndicator } from './components/ProgressIndicator';
 import { ManualCopyOutput } from './components/ManualCopyOutput';
@@ -34,6 +36,8 @@ function App() {
 
   const [parseMode, setParseMode] = useState<ParseMode>(() => StorageService.getParseMode());
   const [concurrencyLevel, setConcurrencyLevel] = useState<ConcurrencyLevel>(() => StorageService.getConcurrencyLevel());
+  // Extra details (e.g. location) for this run only; deliberately not saved
+  const [extraFields, setExtraFields] = useState<string[]>([]);
 
   const [totalCost, setTotalCost] = useState(0);
   const [totalTokens, setTotalTokens] = useState(0);
@@ -135,6 +139,7 @@ function App() {
     setTotalCost(0);
     setTotalTokens(0);
     setFileUploaderKey((prev: number) => prev + 1);
+    setExtraFields([]);
     setJustReset(true);
     setTimeout(() => setJustReset(false), 1500);
   };
@@ -207,7 +212,7 @@ function App() {
         const batch = allCVs.slice(i, i + concurrencyLevel);
         const batchPromises = batch.map(async (cv, batchIndex) => {
           const globalIndex = i + batchIndex;
-          const result = await AIService.extractCVData(cv.text);
+          const result = await AIService.extractCVData(cv.text, extraFields);
 
           return {
             index: globalIndex,
@@ -314,6 +319,13 @@ function App() {
       <ConcurrencySelector
         level={concurrencyLevel}
         onLevelChange={handleConcurrencyChange}
+        theme={actualTheme}
+      />
+
+      <ExtraDetailsInput
+        fields={extraFields}
+        onFieldsChange={setExtraFields}
+        disabled={processingStatus === 'parsing' || processingStatus === 'extracting'}
         theme={actualTheme}
       />
 
@@ -438,6 +450,11 @@ function App() {
             color: textColor
           }}>
             {processingStatus === 'extracting' ? 'Stop the current extraction' : 'Parse PDF(s) + Extract with AI'}
+            {processingStatus !== 'extracting' && extraFields.length > 0 && (
+              <div style={{ marginTop: '0.25rem' }}>
+                + extra details: {extraFields.map(shortLabel).join(', ')}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -501,6 +518,16 @@ function App() {
               }}>
                 {index + 1}. {candidate.name}
               </div>
+              {candidate.extras && candidate.extras.length > 0 && (
+                <div style={{ marginBottom: '0.75rem' }}>
+                  {candidate.extras.map((extra, xIdx) => (
+                    <div key={xIdx} style={{ fontSize: '0.75rem', marginBottom: '0.25rem', color: textColor, opacity: 0.8 }}>
+                      <span style={{ fontWeight: 'bold' }}>{shortLabel(extra.label).toUpperCase()}:</span>{' '}
+                      {extra.value || <span style={{ opacity: 0.6 }}>not stated in CV</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
               <div style={{ marginBottom: '0.75rem' }}>
                 <div style={{ fontSize: '0.75rem', fontWeight: 'bold', marginBottom: '0.25rem', color: textColor, opacity: 0.8 }}>WORK HISTORY:</div>
                 {candidate.workHistory.map((work, wIdx) => (

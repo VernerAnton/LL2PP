@@ -2,7 +2,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import { z } from 'zod';
-import type { CandidateData, WorkExperience, Education } from '../types';
+import type { CandidateData, WorkExperience, Education, ExtraDetail } from '../types';
 import { RateLimiter } from './rateLimiter';
 
 // Space out request starts (1 per second) so bursts don't trip per-minute rate limits.
@@ -30,7 +30,36 @@ const CVDataSchema = z.object({
   education: z.array(EducationSchema),
 });
 
-type CVData = z.infer<typeof CVDataSchema>;
+// Extra details requested for a run (e.g. location) come back as extra_1, extra_2, … so a
+// user-typed label never has to be a valid JSON key. '' means the CV doesn't state it.
+type CVData = z.infer<typeof CVDataSchema> & { extras?: Record<string, string> };
+
+const extraKey = (index: number) => `extra_${index + 1}`;
+
+function buildSchema(extraFields: string[]) {
+  if (extraFields.length === 0) return CVDataSchema;
+  return CVDataSchema.extend({
+    extras: z.object(
+      Object.fromEntries(extraFields.map((label, i) => [extraKey(i), z.string().describe(label)]))
+    ),
+  });
+}
+
+function buildUserMessage(cvText: string, extraFields: string[]): string {
+  if (extraFields.length === 0) return `Extract the candidate data from this CV:\n\n${cvText}`;
+  const fieldList = extraFields.map((label, i) => `- ${extraKey(i)}: ${label}`).join('\n');
+  return `Extract the candidate data from this CV. For this longlist, also extract these extra details into "extras":
+${fieldList}
+
+Give each as a short value, a few words at most, based only on what the CV states (the text in parentheses says what form to use). If the CV doesn't state it, use an empty string. Never guess.
+
+CV:
+
+${cvText}`;
+}
+
+// Values that mean "not stated" even though the instructions ask for an empty string
+const EMPTY_VALUES = /^(-+|n\/?a|none|unknown|not (specified|stated|mentioned|available|given))\.?$/i;
 
 // The app always uses the newest Claude Sonnet the API key can access (looked up via the
 // Models API). This is the known-good model used if that lookup fails or the newest model
@@ -154,7 +183,7 @@ export class AIService {
   /**
    * Extract structured data from a single CV text
    */
-  static async extractCVData(cvText: string): Promise<ExtractionResult> {
+  static async extractCVData(cvText: string, extraFields: string[] = []): Promise<ExtractionResult> {
     if (!this.client) {
       return {
         success: false,
@@ -163,19 +192,23 @@ export class AIService {
     }
 
     const client = this.client;
-    return rateLimiter.enqueue(() => this.extractWithRetry(client, cvText));
+    return rateLimiter.enqueue(() => this.extractWithRetry(client, cvText, extraFields));
   }
 
   /**
    * Run the extraction, retrying once if Claude's answer fails validation
    */
-  private static async extractWithRetry(client: Anthropic, cvText: string): Promise<ExtractionResult> {
+  private static async extractWithRetry(
+    client: Anthropic,
+    cvText: string,
+    extraFields: string[]
+  ): Promise<ExtractionResult> {
     let lastError = 'Unknown error';
 
     for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
       const model = await this.getModel();
       try {
-        return await this.performExtraction(client, model, cvText);
+        return await this.performExtraction(client, model, cvText, extraFields);
       } catch (error) {
         lastError = this.describeError(error);
         console.error(`❌ Extraction attempt ${attempt} failed:`, lastError);
@@ -200,18 +233,23 @@ export class AIService {
   /**
    * Call Claude and turn the response into candidate data
    */
-  private static async performExtraction(client: Anthropic, model: string, cvText: string): Promise<ExtractionResult> {
+  private static async performExtraction(
+    client: Anthropic,
+    model: string,
+    cvText: string,
+    extraFields: string[]
+  ): Promise<ExtractionResult> {
     const response = await client.beta.messages.parse({
       model,
       // Leaves room for thinking tokens as well as the JSON answer
       max_tokens: 16000,
       system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: `Extract the candidate data from this CV:\n\n${cvText}` }],
+      messages: [{ role: 'user', content: buildUserMessage(cvText, extraFields) }],
       // Claude 5.5 models think adaptively; effort sets how deep. The "deeper reasoning" toggle = high effort.
       ...(this.extendedThinking ? { thinking: { type: 'adaptive' as const } } : {}),
       output_config: {
         effort: this.extendedThinking ? 'high' : 'low',
-        format: betaZodOutputFormat(CVDataSchema),
+        format: betaZodOutputFormat(buildSchema(extraFields)),
       },
       // If a safety classifier declines a CV by mistake, the API retries it on a
       // fallback model within the same call instead of failing.
@@ -230,7 +268,7 @@ export class AIService {
       throw new Error('Claude returned no structured data');
     }
 
-    const candidateData = this.toCandidateData(response.parsed_output, cvText);
+    const candidateData = this.toCandidateData(response.parsed_output, cvText, extraFields);
 
     const inputTokens = response.usage.input_tokens;
     const outputTokens = response.usage.output_tokens;
@@ -259,7 +297,7 @@ export class AIService {
   /**
    * Clean the parsed data and map it to the app's candidate type
    */
-  private static toCandidateData(data: CVData, cvText: string): CandidateData {
+  private static toCandidateData(data: CVData, cvText: string, extraFields: string[]): CandidateData {
     const workHistory: WorkExperience[] = this.filterBoardMemberRoles(
       data.workHistory.map((item) => ({
         company: item.company.trim(),
@@ -274,10 +312,16 @@ export class AIService {
       dates: item.dates?.trim() || undefined,
     }));
 
+    const extras: ExtraDetail[] = extraFields.map((label, i) => {
+      const value = (data.extras?.[extraKey(i)] ?? '').trim();
+      return { label, value: EMPTY_VALUES.test(value) ? '' : value };
+    });
+
     return {
       name: data.name.trim(),
       workHistory,
       education,
+      ...(extras.length > 0 ? { extras } : {}),
       rawText: cvText,
     };
   }
