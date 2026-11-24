@@ -11,9 +11,11 @@ interface GenerateButtonProps {
   position: string;
   client: Client | null;
   theme: ActualTheme;
+  /** Called after a deck was generated and downloaded */
+  onGenerated?: () => void;
 }
 
-export function GenerateButton({ candidates, position, client, theme }: GenerateButtonProps) {
+export function GenerateButton({ candidates, position, client, theme, onGenerated }: GenerateButtonProps) {
   const [isGenerating, setIsGenerating] = useState(false);
 
   const handleGenerate = async () => {
@@ -30,6 +32,7 @@ export function GenerateButton({ candidates, position, client, theme }: Generate
       }
       const result = await SlideGenerator.generate(candidates, { position, logo });
       if (!result.success) alert(`Error generating slides: ${result.error}`);
+      else onGenerated?.();
     } catch (error) {
       alert(`Error generating slides: ${error instanceof Error ? error.message : String(error)}`);
     } finally {

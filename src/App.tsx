@@ -3,6 +3,7 @@ import './App.css';
 import { ThemeToggle } from './components/ThemeToggle';
 import { AiSettings } from './components/AiSettings';
 import { ClientsPage } from './components/ClientsPage';
+import { SearchesPage } from './components/SearchesPage';
 import { FirstSlideInput } from './components/FirstSlideInput';
 import { listClients } from './services/clientsService';
 import type { Client } from './shared/apiTypes';
@@ -26,7 +27,7 @@ function App() {
   const [themePreference, setThemePreference] = useState<Theme>(() => StorageService.getTheme());
   const [actualTheme, setActualTheme] = useState<ActualTheme>(() => StorageService.getActualTheme());
 
-  const [tab, setTab] = useState<'cvs' | 'clients'>('cvs');
+  const [tab, setTab] = useState<'cvs' | 'searches' | 'clients'>('cvs');
 
   const [activeModel, setActiveModel] = useState<string | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
@@ -299,6 +300,9 @@ function App() {
         <button className={`mode-button ${tab === 'cvs' ? 'active' : ''}`} onClick={() => setTab('cvs')}>
           [ CVs ]
         </button>
+        <button className={`mode-button ${tab === 'searches' ? 'active' : ''}`} onClick={() => setTab('searches')}>
+          [ SEARCHES ]
+        </button>
         <button className={`mode-button ${tab === 'clients' ? 'active' : ''}`} onClick={() => setTab('clients')}>
           [ CLIENTS ]
         </button>
@@ -308,26 +312,33 @@ function App() {
         <ClientsPage clients={clients} loadError={clientsError} onClientsChange={setClients} theme={actualTheme} />
       )}
 
-      {/* Hidden rather than removed on the Clients tab, so a run in progress keeps going */}
+      {/* Claude settings and concurrency apply to longlists and searches alike */}
+      <div style={{ display: tab === 'clients' ? 'none' : 'block' }}>
+        <AiSettings
+          activeModel={activeModel}
+          modelError={modelError}
+          thinkingLevel={thinkingLevel}
+          onThinkingLevelChange={setThinkingLevel}
+          disabled={processingStatus === 'parsing' || processingStatus === 'extracting'}
+          theme={actualTheme}
+        />
+        <ConcurrencySelector
+          level={concurrencyLevel}
+          onLevelChange={handleConcurrencyChange}
+          theme={actualTheme}
+        />
+      </div>
+
+      {/* Tabs are hidden rather than removed, so a run in progress keeps going while you look elsewhere */}
+      <div style={{ display: tab === 'searches' ? 'block' : 'none' }}>
+        <SearchesPage clients={clients} thinkingLevel={thinkingLevel} concurrencyLevel={concurrencyLevel} theme={actualTheme} />
+      </div>
+
       <div style={{ display: tab === 'cvs' ? 'block' : 'none' }}>
-      <AiSettings
-        activeModel={activeModel}
-        modelError={modelError}
-        thinkingLevel={thinkingLevel}
-        onThinkingLevelChange={setThinkingLevel}
-        disabled={processingStatus === 'parsing' || processingStatus === 'extracting'}
-        theme={actualTheme}
-      />
 
       <ParseModeSelector
         mode={parseMode}
         onModeChange={handleParseModeChange}
-        theme={actualTheme}
-      />
-
-      <ConcurrencySelector
-        level={concurrencyLevel}
-        onLevelChange={handleConcurrencyChange}
         theme={actualTheme}
       />
 
