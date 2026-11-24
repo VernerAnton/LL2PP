@@ -1,64 +1,17 @@
-# Template Setup Checklist
+# Changing the slide template
 
-## Quick Setup (2 Steps)
+The slide design is edited in the app, on the **DESIGN** tab. No code changes are needed.
 
-### ✅ Step 1: Export Template Slide as Image
-1. Open your template PPTX file
-2. Right-click on the slide (in slide panel)
-3. **"Save as Picture..."** → save as `template-background.png`
-4. Move to: `public/assets/template-background.png`
+1. In PowerPoint, open the new template and export each of its three slides as a picture
+   (right-click the slide in the slide panel → **Save as Picture…**, PNG):
+   - the **first** (title) slide,
+   - the **candidate** slide (the one that holds four candidates),
+   - the **last** slide.
+2. On the DESIGN tab, click **REPLACE BACKGROUND** for each slide and pick its picture.
+   All three must have the same proportions: 4:3 or 16:9. The slide size follows them.
+3. Drag the boxes into place: on the first slide the LONGLIST / position / date text and the spot
+   for new client logos; on the candidate slide each candidate's education and name/work boxes.
+4. Click **SAVE DESIGN**. If the first slide changed, check each client's logo position on the
+   CLIENTS tab.
 
-**Tip:** Export as PNG for best quality, or JPG for smaller file size.
-
-### ✅ Step 2: Test Generation
-```bash
-npm run dev
-```
-- Upload a test PDF
-- Generate slides
-- Verify the template background appears correctly with text on top
-
----
-
-## What Changed
-
-**New Files:**
-- `public/assets/` ← Put your template background image here
-- `public/assets/README.md` ← Image export instructions
-- `docs/templates/TEMPLATE-SETUP.md` ← Detailed setup guide
-
-**Modified Files:**
-- `src/services/slideGenerator.ts` ← Uses template image as slide background
-
-**How It Works:**
-1. You export your template slide as a PNG/JPG image
-2. The image is used as the background for all slides
-3. Text is placed on top using the same layout coordinates
-4. Result: Perfect match to your original template!
-
-**Benefits:**
-- ✅ Exact colors - no need to match hex codes
-- ✅ Exact logo position - already in the image
-- ✅ Exact layout - everything preserved
-- ✅ Simple to update - just re-export the image
-
----
-
-## Optional: Keep Template PPTX for Reference
-
-You can keep your original template PPTX in the repo for future reference:
-```bash
-# Create templates folder
-mkdir -p docs/templates
-
-# Add your template (for reference only)
-cp /path/to/your/template.pptx docs/templates/suorahaku-template.pptx
-```
-
-This way you always have the source file if you need to make changes and re-export.
-
----
-
-## Need Help?
-
-See `docs/templates/TEMPLATE-SETUP.md` for detailed instructions on exporting the slide image.
+**RESET TO BUILT-IN DESIGN** goes back to the original template (the images in `public/assets/`).
