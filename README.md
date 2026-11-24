@@ -14,7 +14,8 @@ LL2PP reads CV PDFs (one longlist PDF or individual CVs), uses Claude to extract
 - **Clients and logos**: add a client once, upload its logo (empty borders trimmed automatically, crop by hand), and drag/resize it on a preview of the real first slide. Pick the client when making a deck and the logo goes exactly where you placed it.
 - **First slide**: logo, then LONGLIST, the position and today's date (e.g. 24.11.2026).
 - **Saved searches** for individual CVs that arrive in batches: create a search (name, client, position, extra details), add CVs over days or weeks, reorder/edit/remove candidates, download the deck any time, then **Finish & delete**. Each CV is saved as extracted data only, as soon as it's processed.
-- **PowerPoint output** generated in the browser with PptxGenJS, using the template images in `public/assets/`.
+- **Slide design** (DESIGN tab): replace the first, candidate and last slide backgrounds and drag every text box into place. The slide size (4:3 or 16:9 widescreen) follows the images' proportions. The original template in `public/assets/` is the built-in design.
+- **PowerPoint output** generated in the browser with PptxGenJS, using the current slide design.
 - **Cost tracking**: token usage and estimated cost per run.
 - **Version stamp and update notice**: the footer shows the app version (`V1`, …) and build; an open tab offers a reload when a newer build is deployed.
 - **Keeps only what's needed**: longlists and CV text are never stored. Clients and logos are saved, and saved searches keep extracted data until you finish and delete them (Cloudflare D1 + R2, EU jurisdiction).
@@ -30,7 +31,7 @@ LL2PP reads CV PDFs (one longlist PDF or individual CVs), uses Claude to extract
 
 - `src/`: the React app (served as static assets). PDF parsing and PPTX generation run in the browser.
 - `worker/`: a Cloudflare Worker serving `/api/*`: Claude extraction, the model lookup, and clients/logos.
-- **D1** database `ll2pp` (clients with logo crop and placement; saved searches and their candidates' extracted data) and **R2** bucket `ll2pp-assets` (logo images), both EU jurisdiction.
+- **D1** database `ll2pp` (clients with logo crop and placement; saved searches and their candidates' extracted data; the slide design) and **R2** bucket `ll2pp-assets` (logos and uploaded slide backgrounds), both EU jurisdiction.
 - **Cloudflare Access** in front of the Worker (log in with a Cloudflare account that is a member of the account). The Worker also verifies the Access token on every `/api` request and rejects requests without one.
 - Secret `ANTHROPIC_API_KEY` is set on the Worker (dashboard: Workers & Pages → ll2pp → Settings → Variables and Secrets).
 
@@ -67,6 +68,7 @@ src/
 │   ├── FirstSlideInput.tsx      # Client and position for the first slide
 │   ├── SearchesPage.tsx         # Saved searches: batches, candidate list, finish & delete
 │   ├── CandidateEditor.tsx      # Fix a saved candidate by hand
+│   ├── DesignPage.tsx           # Slide backgrounds and box positions
 │   ├── ExtraDetailsInput.tsx    # Extra details picklist
 │   ├── …                        # Mode, concurrency, upload, progress, output, update prompt
 ├── services/
@@ -74,17 +76,20 @@ src/
 │   ├── api.ts                   # /api client
 │   ├── clientsService.ts        # Clients and logos API
 │   ├── searchesService.ts       # Saved searches API
+│   ├── designService.ts         # Slide design API and the current design (React context)
 │   ├── imageTools.ts            # SVG conversion, auto-trim, crop
 │   ├── firstSlide.ts            # First slide geometry, date format
 │   ├── slideGenerator.ts        # PPTX generation
 │   └── …
 ├── shared/apiTypes.ts           # Types shared by the app and the Worker
+├── shared/design.ts             # Slide design: sizes, built-in design, validation
 worker/
 ├── index.ts                     # /api router
 ├── auth.ts                      # Cloudflare Access token check
 ├── extract.ts                   # Claude extraction (prompt, schema, model lookup)
 ├── clients.ts                   # Clients (D1) and logos (R2)
-└── searches.ts                  # Saved searches and candidates (D1)
+├── searches.ts                  # Saved searches and candidates (D1)
+└── design.ts                    # Slide design (D1) and uploaded backgrounds (R2)
 migrations/                      # D1 schema
 ```
 

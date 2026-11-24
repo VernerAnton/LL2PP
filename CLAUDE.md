@@ -38,4 +38,9 @@ before adding a service worker.
 - Extra details (location etc.) are a fixed picklist in `src/services/extraDetails.ts`, max 3 per run, not
   saved between loads. Free-text fields were tried and replaced on purpose (too prone to user error); add new
   options to that list instead.
+- The slide design (size, backgrounds, every box position) is data, not code: `src/shared/design.ts` holds
+  the built-in design (the original template) and validation; the saved design lives in D1 with uploaded
+  backgrounds in R2, edited on the DESIGN tab. Read positions from the design (`useDesign()`), never hard-code
+  them. The slide size comes from the backgrounds' proportions (4:3 or 16:9); a 16:9 design needs all three
+  backgrounds uploaded because the built-in ones are 4:3.
 - Build output (`dist/`) is not committed.

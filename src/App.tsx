@@ -4,6 +4,9 @@ import { ThemeToggle } from './components/ThemeToggle';
 import { AiSettings } from './components/AiSettings';
 import { ClientsPage } from './components/ClientsPage';
 import { SearchesPage } from './components/SearchesPage';
+import { DesignPage } from './components/DesignPage';
+import { DesignContext, getDesign } from './services/designService';
+import { BUILT_IN_DESIGN, type SlideDesign } from './shared/design';
 import { FirstSlideInput } from './components/FirstSlideInput';
 import { listClients } from './services/clientsService';
 import type { Client } from './shared/apiTypes';
@@ -27,7 +30,11 @@ function App() {
   const [themePreference, setThemePreference] = useState<Theme>(() => StorageService.getTheme());
   const [actualTheme, setActualTheme] = useState<ActualTheme>(() => StorageService.getActualTheme());
 
-  const [tab, setTab] = useState<'cvs' | 'searches' | 'clients'>('cvs');
+  const [tab, setTab] = useState<'cvs' | 'searches' | 'clients' | 'design'>('cvs');
+
+  // Slide design (backgrounds, size, positions); the built-in one until the saved one loads
+  const [design, setDesign] = useState<SlideDesign>(BUILT_IN_DESIGN);
+  const [designError, setDesignError] = useState<string | null>(null);
 
   const [activeModel, setActiveModel] = useState<string | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
@@ -74,6 +81,9 @@ function App() {
     AIService.getModel()
       .then(setActiveModel)
       .catch((e) => setModelError(e instanceof Error ? e.message : String(e)));
+    getDesign()
+      .then(setDesign)
+      .catch((e) => setDesignError(e instanceof Error ? e.message : String(e)));
     listClients()
       .then(setClients)
       .catch((e) => setClientsError(e instanceof Error ? e.message : String(e)));
@@ -270,6 +280,7 @@ function App() {
 
   return (
     // Extra bottom space while the update prompt is up, so it can't cover the last controls
+    <DesignContext.Provider value={design}>
     <div className="container" style={update.needRefresh ? { paddingBottom: '10rem' } : undefined}>
       <div className="header">
         <ThemeToggle
@@ -296,7 +307,7 @@ function App() {
         [ LongList to PowerPoint - Convert CV PDFs to Presentations ]
       </div>
 
-      <div className="mode-buttons" style={{ marginBottom: '1.5rem' }}>
+      <div className="mode-buttons tabs" style={{ marginBottom: '1.5rem' }}>
         <button className={`mode-button ${tab === 'cvs' ? 'active' : ''}`} onClick={() => setTab('cvs')}>
           [ CVs ]
         </button>
@@ -306,14 +317,25 @@ function App() {
         <button className={`mode-button ${tab === 'clients' ? 'active' : ''}`} onClick={() => setTab('clients')}>
           [ CLIENTS ]
         </button>
+        <button className={`mode-button ${tab === 'design' ? 'active' : ''}`} onClick={() => setTab('design')}>
+          [ DESIGN ]
+        </button>
       </div>
+
+      {designError && (
+        <div style={{ fontSize: '0.75rem', color: '#ff6b6b', marginBottom: '1rem' }}>
+          Could not load the slide design ({designError}); using the built-in one.
+        </div>
+      )}
+
+      {tab === 'design' && <DesignPage design={design} onDesignChange={setDesign} theme={actualTheme} />}
 
       {tab === 'clients' && (
         <ClientsPage clients={clients} loadError={clientsError} onClientsChange={setClients} theme={actualTheme} />
       )}
 
       {/* Claude settings and concurrency apply to longlists and searches alike */}
-      <div style={{ display: tab === 'clients' ? 'none' : 'block' }}>
+      <div style={{ display: tab === 'clients' || tab === 'design' ? 'none' : 'block' }}>
         <AiSettings
           activeModel={activeModel}
           modelError={modelError}
@@ -611,6 +633,7 @@ function App() {
         />
       )}
     </div>
+    </DesignContext.Provider>
   );
 }
 

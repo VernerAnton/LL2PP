@@ -4,7 +4,8 @@ import PptxGenJS from 'pptxgenjs';
 import type { CandidateData } from '../types';
 import { layoutConfig } from './layoutConfig';
 import type { SlideBox } from '../shared/apiTypes';
-import { FIRST_SLIDE_FONT_PT, FIRST_SLIDE_TEXT_BOX, firstSlideText } from './firstSlide';
+import { CANDIDATES_PER_SLIDE, SLIDE_DIMENSIONS, type CandidateSlot, type SlideDesign, type SlideKind } from '../shared/design';
+import { FIRST_SLIDE_FONT_PT, firstSlideText } from './firstSlide';
 
 // Configuration for overflow handling
 const OVERFLOW_CONFIG = {
@@ -19,6 +20,15 @@ export interface FirstSlideOptions {
   logo?: { dataUrl: string; placement: SlideBox };
 }
 
+/** A slide background for PptxGenJS: a path served with the app, or image data */
+export type BackgroundImage = { path: string } | { data: string };
+
+/** The design to build the deck with, and its background images */
+export interface DeckDesign {
+  design: SlideDesign;
+  backgrounds: Record<SlideKind, BackgroundImage>;
+}
+
 export interface GenerationResult {
   success: boolean;
   count: number;
@@ -29,7 +39,7 @@ export class SlideGenerator {
   /**
    * Main function to generate the presentation
    */
-  static async generate(candidates: CandidateData[], firstSlide: FirstSlideOptions): Promise<GenerationResult> {
+  static async generate(candidates: CandidateData[], firstSlide: FirstSlideOptions, deck: DeckDesign): Promise<GenerationResult> {
     try {
       // Validate input
       if (!candidates || candidates.length === 0) {
@@ -45,37 +55,38 @@ export class SlideGenerator {
       const prs = new PptxGenJS();
 
       // 1. Set up presentation properties
-      prs.layout = 'LAYOUT_4x3'; // 4:3 standard aspect ratio
+      // 4:3 (10 x 7.5 in) or widescreen 16:9 (13.33 x 7.5 in), from the design
+      prs.layout = deck.design.size === '16:9' ? 'LAYOUT_WIDE' : 'LAYOUT_4x3';
       prs.author = 'LL2PP - LongList to PowerPoint';
       prs.title = `Candidate Longlist - ${new Date().toLocaleDateString()}`;
 
       // 2. Define slide master with template background image
-      this.defineTemplateMaster(prs);
+      this.defineTemplateMaster(prs, deck.backgrounds.content);
 
       // 3. Add First Slide (title/intro slide with text box)
-      this.addFirstSlide(prs, firstSlide);
+      this.addFirstSlide(prs, firstSlide, deck);
 
       // 4. Process Candidates in Batches of 4
-      const totalSlides = Math.ceil(candidates.length / 4);
+      const totalSlides = Math.ceil(candidates.length / CANDIDATES_PER_SLIDE);
       let slideCount = 0;
 
-      for (let i = 0; i < candidates.length; i += 4) {
+      for (let i = 0; i < candidates.length; i += CANDIDATES_PER_SLIDE) {
         slideCount++;
         console.log(`📄 Generating slide ${slideCount} of ${totalSlides}...`);
 
-        const group = candidates.slice(i, i + 4);
+        const group = candidates.slice(i, i + CANDIDATES_PER_SLIDE);
 
         // Create a new slide using the template master
         const slide = prs.addSlide({ masterName: 'TEMPLATE_MASTER' });
 
         // 4. Place each candidate in their slot
         group.forEach((candidate, idx) => {
-          this.addCandidateToSlide(slide, candidate, idx);
+          this.addCandidateToSlide(slide, candidate, deck.design.contentSlide.slots[idx]);
         });
       }
 
       // 5. Add Last Slide (conclusion/outro slide)
-      this.addLastSlide(prs);
+      this.addLastSlide(prs, deck.backgrounds.last);
 
       // 6. Save with descriptive filename
       const filename = `Candidates_${candidates.length}_${new Date().toISOString().slice(0, 10)}.pptx`;
@@ -101,10 +112,8 @@ export class SlideGenerator {
    * Uses 2-column layout: Education (left) and Experience (right)
    * Format matches LinkedIn export: Name in CAPS, Company - Job Title dates
    */
-  private static addCandidateToSlide(slide: any, candidate: CandidateData, slotIndex: number) {
-    if (slotIndex >= layoutConfig.slots.length) return;
-
-    const slot = layoutConfig.slots[slotIndex];
+  private static addCandidateToSlide(slide: any, candidate: CandidateData, slot: CandidateSlot | undefined) {
+    if (!slot) return;
     const { fonts, colors } = layoutConfig;
 
     // --- DATA PREPARATION ---
@@ -248,49 +257,42 @@ export class SlideGenerator {
   }
 
   /**
-   * Define slide master using template background image
-   * - Full template slide exported as PNG/JPG from your template PPTX
-   * - All visual elements (colors, logo, layout boxes) are burned into the background image
-   * - Text is placed on top using coordinates from layoutConfig
+   * Slide master for the candidate slides: the design's content background. All visual
+   * elements are in the image; text is placed on top at the design's positions.
    */
-  private static defineTemplateMaster(prs: any): void {
+  private static defineTemplateMaster(prs: any, background: BackgroundImage): void {
     prs.defineSlideMaster({
       title: 'TEMPLATE_MASTER',
-      background: { path: 'assets/template-background.png' }, // Full template slide as background
-      objects: []  // No additional objects needed - everything is in the background image
+      background: this.imageSource(background),
+      objects: []
     });
-
-    console.log('✅ Slide master defined with template background image');
   }
 
   /**
    * First slide: background image, the client's logo (where it was placed in the logo
-   * editor), and "LONGLIST / position / date" right-aligned in the white rectangle
+   * editor), and "LONGLIST / position / date" at the design's text position
    */
-  private static addFirstSlide(prs: any, options: FirstSlideOptions): void {
+  private static addFirstSlide(prs: any, options: FirstSlideOptions, deck: DeckDesign): void {
     const slide = prs.addSlide();
-
-    slide.addImage({
-      path: 'assets/first-slide.png',
-      x: 0,
-      y: 0,
-      w: '100%',
-      h: '100%'
-    });
+    slide.addImage({ ...this.imageSource(deck.backgrounds.first), x: 0, y: 0, w: '100%', h: '100%' });
 
     if (options.logo) {
       const { dataUrl, placement } = options.logo;
+      // A placement made for a wider design must not stick out of a narrower slide
+      const { width, height } = SLIDE_DIMENSIONS[deck.design.size];
+      const w = Math.min(placement.w, width);
+      const h = placement.h * (w / placement.w);
       slide.addImage({
         data: dataUrl.replace(/^data:/, ''), // PptxGenJS wants "image/png;base64,..."
-        x: placement.x,
-        y: placement.y,
-        w: placement.w,
-        h: placement.h
+        x: Math.min(Math.max(0, placement.x), width - w),
+        y: Math.min(Math.max(0, placement.y), height - h),
+        w,
+        h
       });
     }
 
     slide.addText(firstSlideText(options.position, new Date()), {
-      ...FIRST_SLIDE_TEXT_BOX,
+      ...deck.design.firstSlide.textBox,
       align: 'right',
       valign: 'top',
       fontSize: FIRST_SLIDE_FONT_PT,
@@ -302,21 +304,16 @@ export class SlideGenerator {
   }
 
   /**
-   * Add last slide with background image only (no text boxes)
+   * Last slide: background image only
    */
-  private static addLastSlide(prs: any): void {
+  private static addLastSlide(prs: any, background: BackgroundImage): void {
     const slide = prs.addSlide();
+    slide.addImage({ ...this.imageSource(background), x: 0, y: 0, w: '100%', h: '100%' });
+  }
 
-    // Add background image (full slide)
-    slide.addImage({
-      path: 'assets/last-slide.png',
-      x: 0,
-      y: 0,
-      w: '100%',
-      h: '100%'
-    });
-
-    console.log('✅ Last slide added with background image');
+  /** PptxGenJS image source: a path, or data as "image/png;base64,..." */
+  private static imageSource(image: BackgroundImage): { path: string } | { data: string } {
+    return 'path' in image ? image : { data: image.data.replace(/^data:/, '') };
   }
 
   /**

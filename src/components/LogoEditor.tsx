@@ -3,14 +3,10 @@ import type { ActualTheme } from '../types';
 import type { Client, PixelRect, SlideBox } from '../shared/apiTypes';
 import { autoTrim, cropToPng, loadImage, prepareOriginal } from '../services/imageTools';
 import { deleteLogo, originalLogoUrl, saveLogo } from '../services/clientsService';
-import {
-  FIRST_SLIDE_FONT_PT,
-  FIRST_SLIDE_TEXT_BOX,
-  SLIDE_HEIGHT,
-  SLIDE_WIDTH,
-  defaultLogoPlacement,
-  firstSlideText,
-} from '../services/firstSlide';
+import { FIRST_SLIDE_FONT_PT, defaultLogoPlacement, firstSlideText } from '../services/firstSlide';
+import { backgroundUrl, useDesign } from '../services/designService';
+import { SLIDE_DIMENSIONS } from '../shared/design';
+import { clamp, handleStyle, startDrag } from './dragUtils';
 
 interface LogoEditorProps {
   client: Client;
@@ -41,6 +37,8 @@ export function LogoEditor({ client, onSaved, theme }: LogoEditorProps) {
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const design = useDesign();
+  const logoArea = design.firstSlide.logoArea;
 
   const borderColor = theme === 'dark' ? '#e0e0e0' : '#2a2a2a';
   const bgColor = theme === 'dark' ? '#2a2a2a' : '#fefdfb';
@@ -63,7 +61,7 @@ export function LogoEditor({ client, onSaved, theme }: LogoEditorProps) {
         const savedCrop = client.crop ?? { x: 0, y: 0, w: img.naturalWidth, h: img.naturalHeight };
         setImage(img);
         setCrop(savedCrop);
-        setPlacement(client.placement ?? defaultLogoPlacement(savedCrop.w, savedCrop.h));
+        setPlacement(client.placement ?? defaultLogoPlacement(logoArea, savedCrop.w, savedCrop.h));
         setStep('place');
       })
       .catch(() => !cancelled && setError('Could not load the saved logo'))
@@ -98,7 +96,7 @@ export function LogoEditor({ client, onSaved, theme }: LogoEditorProps) {
       setImage(img);
       setNewOriginal(blob);
       setCrop(trimmed);
-      setPlacement(defaultLogoPlacement(trimmed.w, trimmed.h));
+      setPlacement(defaultLogoPlacement(logoArea, trimmed.w, trimmed.h));
       setStep('crop');
       setDirty(true);
     } catch (e) {
@@ -110,7 +108,7 @@ export function LogoEditor({ client, onSaved, theme }: LogoEditorProps) {
   const updateCrop = (next: PixelRect) => {
     setCrop(next);
     setDirty(true);
-    setPlacement((p) => (p ? { ...p, h: p.w * (next.h / next.w) } : defaultLogoPlacement(next.w, next.h)));
+    setPlacement((p) => (p ? { ...p, h: p.w * (next.h / next.w) } : defaultLogoPlacement(logoArea, next.w, next.h)));
   };
 
   const handleSave = async () => {
@@ -235,7 +233,7 @@ export function LogoEditor({ client, onSaved, theme }: LogoEditorProps) {
           {crop && (
             <button
               onClick={() => {
-                setPlacement(defaultLogoPlacement(crop.w, crop.h));
+                setPlacement(defaultLogoPlacement(logoArea, crop.w, crop.h));
                 setDirty(true);
               }}
               style={button()}
@@ -258,40 +256,6 @@ export function LogoEditor({ client, onSaved, theme }: LogoEditorProps) {
     </div>
   );
 }
-
-// --- Dragging helper ---------------------------------------------------------------------------
-
-/** Run onMove with the pointer delta (in screen px) until the pointer is released */
-function startDrag(event: React.PointerEvent, onMove: (dx: number, dy: number) => void) {
-  event.preventDefault();
-  event.stopPropagation();
-  const startX = event.clientX;
-  const startY = event.clientY;
-  const target = event.currentTarget as HTMLElement;
-  target.setPointerCapture(event.pointerId);
-  const move = (e: PointerEvent) => onMove(e.clientX - startX, e.clientY - startY);
-  const up = () => {
-    target.removeEventListener('pointermove', move);
-    target.removeEventListener('pointerup', up);
-    target.removeEventListener('pointercancel', up);
-  };
-  target.addEventListener('pointermove', move);
-  target.addEventListener('pointerup', up);
-  target.addEventListener('pointercancel', up);
-}
-
-const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
-
-const handleStyle = (cursor: string): React.CSSProperties => ({
-  position: 'absolute',
-  width: 16,
-  height: 16,
-  background: '#fff',
-  border: '2px solid #2a2a2a',
-  cursor,
-  touchAction: 'none',
-  transform: 'translate(-50%, -50%)',
-});
 
 // --- Crop ---------------------------------------------------------------------------------------
 
@@ -387,6 +351,9 @@ function PlaceView({
   onChange: (placement: SlideBox) => void;
 }) {
   const slide = useRef<HTMLDivElement>(null);
+  const design = useDesign();
+  const { width: SLIDE_WIDTH, height: SLIDE_HEIGHT } = SLIDE_DIMENSIONS[design.size];
+  const textBox = design.firstSlide.textBox;
   const pctX = (inches: number) => `${(inches / SLIDE_WIDTH) * 100}%`;
   const pctY = (inches: number) => `${(inches / SLIDE_HEIGHT) * 100}%`;
 
@@ -427,7 +394,7 @@ function PlaceView({
         width: '100%',
         maxWidth: 640,
         aspectRatio: `${SLIDE_WIDTH} / ${SLIDE_HEIGHT}`,
-        backgroundImage: 'url(/assets/first-slide.png)',
+        backgroundImage: `url(${backgroundUrl(design, 'first')})`,
         backgroundSize: '100% 100%',
         border: '1px solid #999',
         userSelect: 'none',
@@ -437,15 +404,15 @@ function PlaceView({
       {/* Example text, where the real text goes. Drawn as an image so browser dark-mode
           features and extensions can't recolor it (they leave images alone). */}
       <img
-        src={exampleTextImage(text)}
+        src={exampleTextImage(text, textBox.w, textBox.h)}
         alt=""
         draggable={false}
         style={{
           position: 'absolute',
-          left: pctX(FIRST_SLIDE_TEXT_BOX.x),
-          top: pctY(FIRST_SLIDE_TEXT_BOX.y),
-          width: pctX(FIRST_SLIDE_TEXT_BOX.w),
-          height: pctY(FIRST_SLIDE_TEXT_BOX.h),
+          left: pctX(textBox.x),
+          top: pctY(textBox.y),
+          width: pctX(textBox.w),
+          height: pctY(textBox.h),
           opacity: 0.55,
           pointerEvents: 'none',
         }}
@@ -478,9 +445,9 @@ function PlaceView({
  * The first slide's text block as an SVG image, in hundredths of an inch: right-aligned,
  * bold, 18pt (0.25 in), the same box as on the real slide.
  */
-function exampleTextImage(text: string): string {
-  const w = FIRST_SLIDE_TEXT_BOX.w * 100;
-  const h = FIRST_SLIDE_TEXT_BOX.h * 100;
+export function exampleTextImage(text: string, boxW: number, boxH: number): string {
+  const w = boxW * 100;
+  const h = boxH * 100;
   const size = (FIRST_SLIDE_FONT_PT / 72) * 100;
   const escape = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const lines = text

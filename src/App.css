@@ -195,3 +195,13 @@ input:focus {
   background: #e0e0e0;
   color: #1a1a1a;
 }
+
+/* Main tabs: wrap onto two rows on narrow screens instead of squeezing */
+.tabs {
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.tabs .mode-button {
+  min-width: 7.5rem;
+}
