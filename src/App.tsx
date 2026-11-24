@@ -1,7 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import './App.css';
 import { ThemeToggle } from './components/ThemeToggle';
-import { LlmKeyInput } from './components/LlmKeyInput';
+import { AiSettings } from './components/AiSettings';
+import { ClientsPage } from './components/ClientsPage';
+import { FirstSlideInput } from './components/FirstSlideInput';
+import { listClients } from './services/clientsService';
+import type { Client } from './shared/apiTypes';
 import { ParseModeSelector } from './components/ParseModeSelector';
 import { ConcurrencySelector } from './components/ConcurrencySelector';
 import { ExtraDetailsInput } from './components/ExtraDetailsInput';
@@ -15,16 +19,24 @@ import { useAppUpdate } from './useAppUpdate';
 import { APP_VERSION } from './version';
 import { StorageService } from './services/storageService';
 import { PDFService } from './services/pdfService';
-import { AIService } from './services/aiService';
+import { AIService, type ThinkingLevel } from './services/aiService';
 import type { Theme, ActualTheme, ProcessingStatus, CandidateData, ProcessingError, ParseMode, ConcurrencyLevel } from './types';
 
 function App() {
   const [themePreference, setThemePreference] = useState<Theme>(() => StorageService.getTheme());
   const [actualTheme, setActualTheme] = useState<ActualTheme>(() => StorageService.getActualTheme());
 
-  const [apiKey, setApiKey] = useState<string | null>(() => StorageService.getApiKey());
+  const [tab, setTab] = useState<'cvs' | 'clients'>('cvs');
+
   const [activeModel, setActiveModel] = useState<string | null>(null);
-  const [extendedThinking, setExtendedThinking] = useState(false);
+  const [modelError, setModelError] = useState<string | null>(null);
+  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>('auto');
+
+  // Client library (logos) from the server, and the first slide of this deck (not saved)
+  const [clients, setClients] = useState<Client[]>([]);
+  const [clientsError, setClientsError] = useState<string | null>(null);
+  const [firstSlideClientId, setFirstSlideClientId] = useState('');
+  const [position, setPosition] = useState('');
 
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
   const [processingStatus, setProcessingStatus] = useState<ProcessingStatus>('idle');
@@ -56,19 +68,15 @@ function App() {
     StorageService.removeLegacyKeys();
   }, []);
 
-  // Keep AIService in sync with the API key, and show which Sonnet it will use
+  // Which Sonnet the server will use, and the client library
   useEffect(() => {
-    AIService.setApiKey(apiKey);
-    setActiveModel(null);
-    if (!apiKey) return;
-    let current = true;
-    AIService.getModel().then((model) => { if (current) setActiveModel(model); });
-    return () => { current = false; };
-  }, [apiKey]);
-
-  useEffect(() => {
-    AIService.setExtendedThinking(extendedThinking);
-  }, [extendedThinking]);
+    AIService.getModel()
+      .then(setActiveModel)
+      .catch((e) => setModelError(e instanceof Error ? e.message : String(e)));
+    listClients()
+      .then(setClients)
+      .catch((e) => setClientsError(e instanceof Error ? e.message : String(e)));
+  }, []);
 
   useEffect(() => {
     document.body.className = `${actualTheme}-mode`;
@@ -96,20 +104,6 @@ function App() {
   const handleParseModeChange = (mode: ParseMode) => {
     setParseMode(mode);
     StorageService.saveParseMode(mode);
-  };
-
-  const handleSaveApiKey = (key: string) => {
-    setApiKey(key);
-    StorageService.saveApiKey(key);
-  };
-
-  const handleRemoveApiKey = () => {
-    setApiKey(null);
-    StorageService.removeApiKey();
-  };
-
-  const handleExtendedThinkingChange = (enabled: boolean) => {
-    setExtendedThinking(enabled);
   };
 
   const handleConcurrencyChange = (level: ConcurrencyLevel) => {
@@ -140,6 +134,8 @@ function App() {
     setTotalTokens(0);
     setFileUploaderKey((prev: number) => prev + 1);
     setExtraFields([]);
+    setFirstSlideClientId('');
+    setPosition('');
     setJustReset(true);
     setTimeout(() => setJustReset(false), 1500);
   };
@@ -152,11 +148,6 @@ function App() {
   const handleParsePDF = async () => {
     if (uploadedFiles.length === 0) {
       alert('Please upload at least one PDF file first');
-      return;
-    }
-
-    if (!apiKey) {
-      alert('Please enter your Anthropic API key first');
       return;
     }
 
@@ -212,7 +203,11 @@ function App() {
         const batch = allCVs.slice(i, i + concurrencyLevel);
         const batchPromises = batch.map(async (cv, batchIndex) => {
           const globalIndex = i + batchIndex;
-          const result = await AIService.extractCVData(cv.text, selectedExtraFields(extraFields));
+          const result = await AIService.extractCVData(cv.text, {
+            extraFields: selectedExtraFields(extraFields).map((field) => field.id),
+            level: thinkingLevel,
+            source: parseMode,
+          });
 
           return {
             index: globalIndex,
@@ -255,7 +250,7 @@ function App() {
       setFailedExtractions(errors);
       setProcessingStatus('done');
       // Reflect a switch to the fallback model, if the newest Sonnet rejected the request
-      AIService.getModel().then(setActiveModel);
+      AIService.getModel().then(setActiveModel).catch(() => {});
 
     } catch (error) {
       console.error('❌ Error during processing:', error);
@@ -268,8 +263,8 @@ function App() {
   const bgColor = actualTheme === 'dark' ? '#2a2a2a' : '#fefdfb';
   const textColor = actualTheme === 'dark' ? '#e0e0e0' : '#2a2a2a';
 
-  // Allow re-running after a finished or failed run (e.g. after fixing the API key or switching model)
-  const canProcess = uploadedFiles.length > 0 && apiKey &&
+  // Allow re-running after a finished or failed run (e.g. after changing the thinking level)
+  const canProcess = uploadedFiles.length > 0 &&
     (processingStatus === 'idle' || processingStatus === 'done' || processingStatus === 'error');
 
   return (
@@ -300,13 +295,27 @@ function App() {
         [ LongList to PowerPoint - Convert CV PDFs to Presentations ]
       </div>
 
-      <LlmKeyInput
-        existingKey={apiKey}
+      <div className="mode-buttons" style={{ marginBottom: '1.5rem' }}>
+        <button className={`mode-button ${tab === 'cvs' ? 'active' : ''}`} onClick={() => setTab('cvs')}>
+          [ CVs ]
+        </button>
+        <button className={`mode-button ${tab === 'clients' ? 'active' : ''}`} onClick={() => setTab('clients')}>
+          [ CLIENTS ]
+        </button>
+      </div>
+
+      {tab === 'clients' && (
+        <ClientsPage clients={clients} loadError={clientsError} onClientsChange={setClients} theme={actualTheme} />
+      )}
+
+      {/* Hidden rather than removed on the Clients tab, so a run in progress keeps going */}
+      <div style={{ display: tab === 'cvs' ? 'block' : 'none' }}>
+      <AiSettings
         activeModel={activeModel}
-        extendedThinking={extendedThinking}
-        onSave={handleSaveApiKey}
-        onRemove={handleRemoveApiKey}
-        onExtendedThinkingChange={handleExtendedThinkingChange}
+        modelError={modelError}
+        thinkingLevel={thinkingLevel}
+        onThinkingLevelChange={setThinkingLevel}
+        disabled={processingStatus === 'parsing' || processingStatus === 'extracting'}
         theme={actualTheme}
       />
 
@@ -326,6 +335,16 @@ function App() {
         selected={extraFields}
         onSelectedChange={setExtraFields}
         disabled={processingStatus === 'parsing' || processingStatus === 'extracting'}
+        theme={actualTheme}
+      />
+
+      <FirstSlideInput
+        clients={clients}
+        clientId={firstSlideClientId}
+        onClientIdChange={setFirstSlideClientId}
+        position={position}
+        onPositionChange={setPosition}
+        onManageClients={() => setTab('clients')}
         theme={actualTheme}
       />
 
@@ -479,6 +498,8 @@ function App() {
       {extractedCandidates.length > 0 && (
         <GenerateButton
           candidates={extractedCandidates}
+          position={position}
+          client={clients.find((c) => c.id === firstSlideClientId) ?? null}
           theme={actualTheme}
         />
       )}
@@ -555,6 +576,7 @@ function App() {
           theme={actualTheme}
         />
       )}
+      </div>
 
       <div className="footer">
         [ ✅ PDF Parsing | ✅ AI Extraction | ✅ PPTX Generation | 🚀 App Ready! ]

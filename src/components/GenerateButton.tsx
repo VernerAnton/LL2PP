@@ -1,28 +1,39 @@
 import { useState } from 'react';
 import type { CandidateData, ActualTheme } from '../types';
+import type { Client } from '../shared/apiTypes';
 import { SlideGenerator } from '../services/slideGenerator';
+import { defaultLogoPlacement } from '../services/firstSlide';
+import { logoDataUrl } from '../services/clientsService';
 
 interface GenerateButtonProps {
   candidates: CandidateData[];
+  /** For the first slide */
+  position: string;
+  client: Client | null;
   theme: ActualTheme;
 }
 
-export function GenerateButton({ candidates, theme }: GenerateButtonProps) {
+export function GenerateButton({ candidates, position, client, theme }: GenerateButtonProps) {
   const [isGenerating, setIsGenerating] = useState(false);
 
   const handleGenerate = async () => {
     if (candidates.length === 0) return;
 
     setIsGenerating(true);
-    // Add a small delay so the user sees the spinner
-    await new Promise(r => setTimeout(r, 500));
-
-    const result = await SlideGenerator.generate(candidates);
-
-    setIsGenerating(false);
-
-    if (!result.success) {
-      alert(`Error generating slides: ${result.error}`);
+    try {
+      let logo;
+      if (client?.hasLogo && client.logoWidthPx && client.logoHeightPx) {
+        logo = {
+          dataUrl: await logoDataUrl(client),
+          placement: client.placement ?? defaultLogoPlacement(client.logoWidthPx, client.logoHeightPx),
+        };
+      }
+      const result = await SlideGenerator.generate(candidates, { position, logo });
+      if (!result.success) alert(`Error generating slides: ${result.error}`);
+    } catch (error) {
+      alert(`Error generating slides: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsGenerating(false);
     }
   };
 
