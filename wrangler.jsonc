@@ -3,6 +3,9 @@
   "name": "ll2pp",
   "main": "worker/index.ts",
   "compatibility_date": "2026-11-01",
+  // Only the protected workers.dev address; no per-version preview URLs (same as the clearance app)
+  "workers_dev": true,
+  "preview_urls": false,
   "assets": {
     // The React app. Only /api/* requests reach the Worker code.
     "not_found_handling": "single-page-application",
@@ -27,7 +30,7 @@
   "vars": {
     // Cloudflare Access (login). The Worker rejects /api requests without a valid Access token.
     "ACCESS_TEAM_DOMAIN": "aged-union-528e.cloudflareaccess.com",
-    "ACCESS_AUD": ""
+    "ACCESS_AUD": "6d99adadee883dd2bcd46da2a5f7a283af3519662521d5ef576d07bca5ced0c6"
   },
   // ANTHROPIC_API_KEY is a secret, set in the dashboard (Settings > Variables and Secrets)
   "observability": { "enabled": true }
