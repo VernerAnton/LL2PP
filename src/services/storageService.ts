@@ -3,10 +3,10 @@
 import type { ParseMode, ConcurrencyLevel } from '../types';
 
 // Keys written by older versions of the app that are no longer used
-const LEGACY_KEYS = ['ll2lo_ai_provider', 'll2lo_anthropic_model'] as const;
+// (ll2lo_api_key: the Anthropic key is kept on the server now, so remove the copy older versions left in the browser)
+const LEGACY_KEYS = ['ll2lo_ai_provider', 'll2lo_anthropic_model', 'll2lo_api_key'] as const;
 
 const STORAGE_KEYS = {
-  API_KEY: 'll2lo_api_key',
   CONCURRENCY_LEVEL: 'll2lo_concurrency_level',
   THEME: 'theme',
   PARSE_MODE: 'll2lo_parse_mode',
@@ -18,27 +18,6 @@ export class StorageService {
    */
   static removeLegacyKeys(): void {
     LEGACY_KEYS.forEach((key) => localStorage.removeItem(key));
-  }
-
-  /**
-   * Save API key to localStorage
-   */
-  static saveApiKey(key: string): void {
-    localStorage.setItem(STORAGE_KEYS.API_KEY, key);
-  }
-
-  /**
-   * Get API key from localStorage
-   */
-  static getApiKey(): string | null {
-    return localStorage.getItem(STORAGE_KEYS.API_KEY);
-  }
-
-  /**
-   * Remove API key from localStorage
-   */
-  static removeApiKey(): void {
-    localStorage.removeItem(STORAGE_KEYS.API_KEY);
   }
 
   /**

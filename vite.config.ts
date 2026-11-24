@@ -1,5 +1,6 @@
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
+import { cloudflare } from '@cloudflare/vite-plugin'
 import { execSync } from 'node:child_process'
 import { APP_VERSION } from './src/version.ts'
 
@@ -26,6 +27,8 @@ function versionFile(): Plugin {
     name: 'll2pp-version-file',
     apply: 'build',
     generateBundle() {
+      // Only into the browser build, next to index.html (not into the Worker bundle)
+      if (this.environment.name !== 'client') return
       this.emitFile({
         type: 'asset',
         fileName: 'version.json',
@@ -37,12 +40,11 @@ function versionFile(): Plugin {
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react(), versionFile()],
-  base: '/LL2PP/',
+  // cloudflare(): builds and runs the Worker in worker/ (API, database, files) alongside the app
+  plugins: [react(), cloudflare(), versionFile()],
   define: {
     __BUILD_ID__: JSON.stringify(buildId),
     __BUILD_COMMIT__: JSON.stringify(commit),
     __BUILD_TIME__: JSON.stringify(buildTime),
   },
-  // No proxy needed - the Anthropic SDK calls the API directly from the browser
 })

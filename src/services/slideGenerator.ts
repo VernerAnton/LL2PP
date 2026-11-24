@@ -3,12 +3,21 @@
 import PptxGenJS from 'pptxgenjs';
 import type { CandidateData } from '../types';
 import { layoutConfig } from './layoutConfig';
+import type { SlideBox } from '../shared/apiTypes';
+import { FIRST_SLIDE_FONT_PT, FIRST_SLIDE_TEXT_BOX, firstSlideText } from './firstSlide';
 
 // Configuration for overflow handling
 const OVERFLOW_CONFIG = {
   maxExperienceBullets: 5,   // Limit work history to top 5 roles
   maxEducationChars: 120,    // Warn if education text exceeds this
 };
+
+/** What goes on the first slide besides the fixed design */
+export interface FirstSlideOptions {
+  position: string;
+  /** The client's logo as a data URL (image/png) and where it goes */
+  logo?: { dataUrl: string; placement: SlideBox };
+}
 
 export interface GenerationResult {
   success: boolean;
@@ -20,7 +29,7 @@ export class SlideGenerator {
   /**
    * Main function to generate the presentation
    */
-  static async generate(candidates: CandidateData[]): Promise<GenerationResult> {
+  static async generate(candidates: CandidateData[], firstSlide: FirstSlideOptions): Promise<GenerationResult> {
     try {
       // Validate input
       if (!candidates || candidates.length === 0) {
@@ -44,7 +53,7 @@ export class SlideGenerator {
       this.defineTemplateMaster(prs);
 
       // 3. Add First Slide (title/intro slide with text box)
-      this.addFirstSlide(prs);
+      this.addFirstSlide(prs, firstSlide);
 
       // 4. Process Candidates in Batches of 4
       const totalSlides = Math.ceil(candidates.length / 4);
@@ -255,13 +264,12 @@ export class SlideGenerator {
   }
 
   /**
-   * Add first slide with background image and text box
-   * Text box contains: "LONGLIST", "Job Title", "Date" (right-aligned, each on own line)
+   * First slide: background image, the client's logo (where it was placed in the logo
+   * editor), and "LONGLIST / position / date" right-aligned in the white rectangle
    */
-  private static addFirstSlide(prs: any): void {
+  private static addFirstSlide(prs: any, options: FirstSlideOptions): void {
     const slide = prs.addSlide();
 
-    // Add background image (full slide)
     slide.addImage({
       path: 'assets/first-slide.png',
       x: 0,
@@ -270,29 +278,27 @@ export class SlideGenerator {
       h: '100%'
     });
 
-    // Add text box with placeholder content
-    // Measurements converted from cm to inches:
-    // X: 6.91 cm = 2.72 inches
-    // Y: 13.98 cm = 5.50 inches
-    // Width: 10.48 cm = 4.13 inches
-    // Height: 3.16 cm = 1.24 inches
-    const textContent = 'LONGLIST\nJob Title\nDate';
+    if (options.logo) {
+      const { dataUrl, placement } = options.logo;
+      slide.addImage({
+        data: dataUrl.replace(/^data:/, ''), // PptxGenJS wants "image/png;base64,..."
+        x: placement.x,
+        y: placement.y,
+        w: placement.w,
+        h: placement.h
+      });
+    }
 
-    slide.addText(textContent, {
-      x: 2.72,
-      y: 5.50,
-      w: 4.13,
-      h: 1.24,
+    slide.addText(firstSlideText(options.position, new Date()), {
+      ...FIRST_SLIDE_TEXT_BOX,
       align: 'right',
       valign: 'top',
-      fontSize: 18,
+      fontSize: FIRST_SLIDE_FONT_PT,
       bold: true,
       color: '000000',
       wrap: true,
       margin: 0
     });
-
-    console.log('✅ First slide added with background and text box');
   }
 
   /**

@@ -1,27 +1,37 @@
 # LL2PP - LongList to PowerPoint
 
-**Turn CV PDFs into candidate presentation slides, entirely in your browser.**
+**Turn CV PDFs into candidate presentation slides.**
 
-LL2PP reads CV PDFs (one longlist PDF or individual CVs), uses Claude to extract each candidate's name, recent work history and education, and generates a downloadable `.pptx` with four candidates per slide.
+LL2PP reads CV PDFs (one longlist PDF or individual CVs), uses Claude to extract each candidate's name, recent work history and education, and generates a downloadable `.pptx` with four candidates per slide. It runs on Cloudflare behind a login.
 
 ## Features
 
 - **PDF parsing** in the browser with PDF.js. Longlist mode splits one PDF into CVs at each "Page 1 of …" marker; individual mode treats each PDF as one CV.
-- **Claude extraction** with structured outputs, so every answer is valid JSON in the expected shape. Board roles are excluded and dates normalised to `MM/YYYY - MM/YYYY` or `YYYY - YYYY`.
-- **Always the newest Claude Sonnet**: on startup the app asks the Anthropic Models API for the newest active Sonnet that supports what the app needs, so new Sonnet releases are picked up automatically. If the lookup fails or the new model rejects the request, it falls back to Claude Sonnet 5.5.
-- **Deeper reasoning** toggle for complex individual CVs (unusual layouts, ambiguous titles or dates).
-- **Extra details** for one-off client requests: pick up to 3 of Location, Languages, Years of experience and Industry. Claude extracts them for every CV and they appear after the name on the slide (**JANE DOE** · Helsinki). The selection starts empty on every page load; new options are added in `src/services/extraDetails.ts`.
-- **PowerPoint output** generated client-side with PptxGenJS, using the template images in `public/assets/`.
+- **Claude extraction** on the server with structured outputs, so every answer is valid JSON in the expected shape. Board roles are excluded and dates normalised to `MM/YYYY - MM/YYYY` or `YYYY - YYYY`. The Anthropic API key lives only on the server.
+- **Always the newest Claude Sonnet**: the server asks the Anthropic Models API for the newest active Sonnet that supports what the app needs, falling back to Claude Sonnet 5.5.
+- **Thinking level**: Auto, Low, Medium or High. Auto uses low for longlist exports and medium for individual CVs, and retries a CV that comes back incomplete once at high.
+- **Extra details** for one-off client requests: pick up to 3 of Location, Languages, Years of experience and Industry. They appear after the name on the slide (**JANE DOE** · Helsinki).
+- **Clients and logos**: add a client once, upload its logo (empty borders trimmed automatically, crop by hand), and drag/resize it on a preview of the real first slide. Pick the client when making a deck and the logo goes exactly where you placed it.
+- **First slide**: logo, then LONGLIST, the position and today's date (e.g. 24.11.2026).
+- **PowerPoint output** generated in the browser with PptxGenJS, using the template images in `public/assets/`.
 - **Cost tracking**: token usage and estimated cost per run.
-- **Version stamp and update notice**: the footer shows the app version (`V1`, …) and build. If a newer build is deployed while the app is open, it offers a reload instead of leaving you on the old build.
-- **Private by design**: no backend. CVs and your API key stay in your browser and are only sent to the Anthropic API.
+- **Version stamp and update notice**: the footer shows the app version (`V1`, …) and build; an open tab offers a reload when a newer build is deployed.
+- **Keeps only what's needed**: longlists and CVs are not stored. Only clients and their logos are saved (Cloudflare D1 + R2, EU jurisdiction).
 
 ## Using it
 
-1. Get an API key at [console.anthropic.com](https://console.anthropic.com).
-2. Open the app and paste the key. Turn on deeper reasoning if the CVs are complex.
-3. Choose longlist or individual mode and a concurrency level (1–2 for new accounts on API usage Tier 1).
+1. Open the app and log in with your Cloudflare account (Cloudflare Access).
+2. Optional: on the **CLIENTS** tab, add the client and its logo.
+3. On the **CVs** tab pick the thinking level, mode, extra details, and the client and position for the first slide.
 4. Upload the PDF(s), click **PROCESS CVs**, review the results, then **DOWNLOAD .PPTX**.
+
+## Architecture
+
+- `src/`: the React app (served as static assets). PDF parsing and PPTX generation run in the browser.
+- `worker/`: a Cloudflare Worker serving `/api/*`: Claude extraction, the model lookup, and clients/logos.
+- **D1** database `ll2pp` (clients, logo crop and placement) and **R2** bucket `ll2pp-assets` (logo images), both EU jurisdiction.
+- **Cloudflare Access** in front of the Worker (log in with a Cloudflare account that is a member of the account). The Worker also verifies the Access token on every `/api` request and rejects requests without one.
+- Secret `ANTHROPIC_API_KEY` is set on the Worker (dashboard: Workers & Pages → ll2pp → Settings → Variables and Secrets).
 
 ## Development
 
@@ -29,12 +39,20 @@ Requires Node.js 20.19+ or 22.12+.
 
 ```bash
 npm install
-npm run dev      # local dev server
-npm run build    # type-check and production build into dist/
-npm run preview  # serve the production build
+npx wrangler d1 migrations apply ll2pp --local   # once: create the local database
+npm run dev      # app + Worker locally, with local D1/R2
+npm run build    # type-check (app and Worker) and production build into dist/
+npm run deploy   # build, apply database migrations, deploy to Cloudflare
 ```
 
-Pushing to `main` deploys to GitHub Pages via `.github/workflows/deploy.yml`. Bump `APP_VERSION` in `src/version.ts` with every change that ships.
+Local development needs a `.dev.vars` file (gitignored):
+
+```
+DEV_SKIP_AUTH=true
+ANTHROPIC_API_KEY=<a key, or anything when ANTHROPIC_BASE_URL points at a mock>
+```
+
+Bump `APP_VERSION` in `src/version.ts` with every change that ships.
 
 ## Project structure
 
@@ -42,26 +60,29 @@ Pushing to `main` deploys to GitHub Pages via `.github/workflows/deploy.yml`. Bu
 src/
 ├── App.tsx                      # Main application and processing flow
 ├── components/
-│   ├── LlmKeyInput.tsx          # API key, active model and extended-thinking settings
-│   ├── ParseModeSelector.tsx    # Longlist vs individual mode
-│   ├── ConcurrencySelector.tsx  # Parallel request level
-│   ├── FileUploader.tsx         # PDF upload
-│   ├── ProgressIndicator.tsx    # Processing status
-│   ├── GenerateButton.tsx       # PPTX download
-│   ├── ManualCopyOutput.tsx     # Copy-paste text output
-│   └── ThemeToggle.tsx          # System/light/dark theme
+│   ├── AiSettings.tsx           # Model in use and thinking level
+│   ├── ClientsPage.tsx          # Client library
+│   ├── LogoEditor.tsx           # Logo upload, trim/crop, placement on the first slide
+│   ├── FirstSlideInput.tsx      # Client and position for the first slide
+│   ├── ExtraDetailsInput.tsx    # Extra details picklist
+│   ├── …                        # Mode, concurrency, upload, progress, output, update prompt
 ├── services/
-│   ├── aiService.ts             # Newest-Sonnet lookup and Claude extraction (Anthropic SDK)
-│   ├── pdfService.ts            # PDF parsing and CV splitting
-│   ├── rateLimiter.ts           # Spaces out API request starts
+│   ├── aiService.ts             # Calls /api/extract; Auto thinking level logic
+│   ├── api.ts                   # /api client
+│   ├── clientsService.ts        # Clients and logos API
+│   ├── imageTools.ts            # SVG conversion, auto-trim, crop
+│   ├── firstSlide.ts            # First slide geometry, date format
 │   ├── slideGenerator.ts        # PPTX generation
-│   ├── layoutConfig.ts          # Slide layout coordinates
-│   └── storageService.ts        # localStorage settings
-└── types.ts
+│   └── …
+├── shared/apiTypes.ts           # Types shared by the app and the Worker
+worker/
+├── index.ts                     # /api router
+├── auth.ts                      # Cloudflare Access token check
+├── extract.ts                   # Claude extraction (prompt, schema, model lookup)
+└── clients.ts                   # Clients (D1) and logos (R2)
+migrations/                      # D1 schema
 ```
-
-To change the slide template, see `TEMPLATE-CHECKLIST.md` and `public/assets/README.md`.
 
 ## Tech stack
 
-React 19, TypeScript, Vite, PDF.js, PptxGenJS, Zod and the Anthropic TypeScript SDK.
+React 19, TypeScript, Vite, Cloudflare Workers (D1, R2, Access), PDF.js, PptxGenJS, Zod and the Anthropic TypeScript SDK.

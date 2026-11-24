@@ -1,0 +1,34 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ll2pp",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    // The React app. Only /api/* requests reach the Worker code.
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ll2pp",
+      "database_id": "be21e247-f315-4ede-aeba-3ea2c581b536",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      // Client logos (and later slide backgrounds). EU jurisdiction.
+      "binding": "FILES",
+      "bucket_name": "ll2pp-assets",
+      "jurisdiction": "eu"
+    }
+  ],
+  "vars": {
+    // Cloudflare Access (login). The Worker rejects /api requests without a valid Access token.
+    "ACCESS_TEAM_DOMAIN": "aged-union-528e.cloudflareaccess.com",
+    "ACCESS_AUD": ""
+  },
+  // ANTHROPIC_API_KEY is a secret, set in the dashboard (Settings > Variables and Secrets)
+  "observability": { "enabled": true }
+}
