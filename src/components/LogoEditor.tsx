@@ -430,32 +430,26 @@ function PlaceView({
         backgroundImage: 'url(/assets/first-slide.png)',
         backgroundSize: '100% 100%',
         border: '1px solid #999',
-        containerType: 'inline-size',
         userSelect: 'none',
         overflow: 'hidden',
       }}
     >
-      {/* Example text, where the real text goes */}
-      <div
+      {/* Example text, where the real text goes. Drawn as an image so browser dark-mode
+          features and extensions can't recolor it (they leave images alone). */}
+      <img
+        src={exampleTextImage(text)}
+        alt=""
+        draggable={false}
         style={{
           position: 'absolute',
           left: pctX(FIRST_SLIDE_TEXT_BOX.x),
           top: pctY(FIRST_SLIDE_TEXT_BOX.y),
           width: pctX(FIRST_SLIDE_TEXT_BOX.w),
-          textAlign: 'right',
-          whiteSpace: 'pre-line',
-          fontFamily: 'Calibri, Carlito, Arial, sans-serif',
-          fontWeight: 'bold',
-          // 18pt on a 10in-wide slide, as a share of the preview width
-          fontSize: `${((FIRST_SLIDE_FONT_PT / 72) / SLIDE_WIDTH) * 100}cqw`,
-          lineHeight: 1.2,
-          color: '#000',
+          height: pctY(FIRST_SLIDE_TEXT_BOX.h),
           opacity: 0.55,
           pointerEvents: 'none',
         }}
-      >
-        {text}
-      </div>
+      />
 
       {logoUrl && (
         <div
@@ -478,4 +472,24 @@ function PlaceView({
       )}
     </div>
   );
+}
+
+/**
+ * The first slide's text block as an SVG image, in hundredths of an inch: right-aligned,
+ * bold, 18pt (0.25 in), the same box as on the real slide.
+ */
+function exampleTextImage(text: string): string {
+  const w = FIRST_SLIDE_TEXT_BOX.w * 100;
+  const h = FIRST_SLIDE_TEXT_BOX.h * 100;
+  const size = (FIRST_SLIDE_FONT_PT / 72) * 100;
+  const escape = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const lines = text
+    .split('\n')
+    .map((line, i) => `<text x="${w}" y="${size * (0.9 + i * 1.2)}">${escape(line)}</text>`)
+    .join('');
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">` +
+    `<g font-family="Calibri, Carlito, Arial, sans-serif" font-weight="bold" font-size="${size}" text-anchor="end" fill="#000">` +
+    `${lines}</g></svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
