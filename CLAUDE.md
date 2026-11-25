@@ -43,4 +43,9 @@ before adding a service worker.
   backgrounds in R2, edited on the DESIGN tab. Read positions from the design (`useDesign()`), never hard-code
   them. The slide size comes from the backgrounds' proportions (4:3 or 16:9); a 16:9 design needs all three
   backgrounds uploaded because the built-in ones are 4:3.
+- The decks come out finished: the formatting the owner's old PowerPoint macro (FormatEducationBoxes +
+  ApplyTemplate) applied is built in. `slideGenerator.ts` writes bold institution paragraphs and real
+  13.5pt degree bullets in Calibri; `pptxFinish.ts` swaps in the company theme (`src/assets/pptx-theme.xml`,
+  taken from a macro-processed deck) and sets the degree bullets to Arial. It was verified paragraph by
+  paragraph against a deck the macro had processed; keep it that way. Don't reintroduce the `>>>` markers.
 - Build output (`dist/`) is not committed.

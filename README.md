@@ -15,7 +15,7 @@ LL2PP reads CV PDFs (one longlist PDF or individual CVs), uses Claude to extract
 - **First slide**: logo, then LONGLIST, the position and today's date (e.g. 24.11.2026).
 - **Saved searches** for individual CVs that arrive in batches: create a search (name, client, position, extra details), add CVs over days or weeks, reorder/edit/remove candidates, download the deck any time, then **Finish & delete**. Each CV is saved as extracted data only, as soon as it's processed.
 - **Slide design** (DESIGN tab): replace the first, candidate and last slide backgrounds and drag every text box into place. The slide size (4:3 or 16:9 widescreen) follows the images' proportions. The original template in `public/assets/` is the built-in design.
-- **PowerPoint output** generated in the browser with PptxGenJS, using the current slide design.
+- **PowerPoint output** generated in the browser with PptxGenJS, using the current slide design, already formatted as the old PowerPoint macro used to leave it: bold institutions with bulleted degrees, Calibri throughout, and the Suorahakutoimisto Yellow theme. No macro step needed.
 - **Cost tracking**: token usage and estimated cost per run.
 - **Version stamp and update notice**: the footer shows the app version (`V1`, …) and build; an open tab offers a reload when a newer build is deployed.
 - **Keeps only what's needed**: longlists and CV text are never stored. Clients and logos are saved, and saved searches keep extracted data until you finish and delete them (Cloudflare D1 + R2, EU jurisdiction).
@@ -80,6 +80,7 @@ src/
 │   ├── imageTools.ts            # SVG conversion, auto-trim, crop
 │   ├── firstSlide.ts            # First slide geometry, date format
 │   ├── slideGenerator.ts        # PPTX generation
+│   ├── pptxFinish.ts            # Theme + bullet font finishing (replaces the old macro)
 │   └── …
 ├── shared/apiTypes.ts           # Types shared by the app and the Worker
 ├── shared/design.ts             # Slide design: sizes, built-in design, validation

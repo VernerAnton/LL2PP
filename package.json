@@ -12,6 +12,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^1.6.0",
     "jose": "^6.2.18",
+    "jszip": "^3.10.1",
     "pdfjs-dist": "^6.5.438",
     "pptxgenjs": "^4.0.1",
     "react": "^19.3.1",

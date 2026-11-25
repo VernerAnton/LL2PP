@@ -6,6 +6,12 @@ import { layoutConfig } from './layoutConfig';
 import type { SlideBox } from '../shared/apiTypes';
 import { CANDIDATES_PER_SLIDE, SLIDE_DIMENSIONS, type CandidateSlot, type SlideDesign, type SlideKind } from '../shared/design';
 import { FIRST_SLIDE_FONT_PT, firstSlideText } from './firstSlide';
+import { downloadBlob, finishDeck } from './pptxFinish';
+
+/** Every text box uses Calibri, as the template does */
+const FONT_FACE = 'Calibri';
+/** Indent of the degree bullets in the education column (171450 EMU, as in the template) */
+const EDUCATION_BULLET_INDENT_PT = 13.5;
 
 // Configuration for overflow handling
 const OVERFLOW_CONFIG = {
@@ -91,7 +97,8 @@ export class SlideGenerator {
       // 6. Save with descriptive filename
       const filename = `Candidates_${candidates.length}_${new Date().toISOString().slice(0, 10)}.pptx`;
       console.log(`💾 Saving presentation: ${filename}`);
-      await prs.writeFile({ fileName: filename });
+      const pptx = (await prs.write({ outputType: 'arraybuffer' })) as ArrayBuffer;
+      downloadBlob(await finishDeck(pptx), filename);
 
       console.log(`✅ Presentation generated successfully: ${slideCount} slides, ${candidates.length} candidates`);
 
@@ -130,37 +137,32 @@ export class SlideGenerator {
           .join('\n')
       : 'No operational experience found (board positions filtered)';
 
-    // 2. Education: Format Education array
-    // Institution with >>> prefix for VBA macro to identify and format (bold, capitalize, etc.)
-    // >>> prefix allows PowerPoint VBA macro to identify and bold institution names
-    const educationText = candidate.education
-      .map(e => {
-        if (e.degree) {
-          const dateStr = e.dates ? ` · (${e.dates})` : '';
-          return `>>>${e.institution}\n• ${e.degree}${dateStr}`;
-        } else {
-          // No degree - just show institution
-          return `>>>${e.institution}`;
-        }
-      })
-      .join('\n');
+    // 2. Education: one paragraph per institution (bold), followed by the degree as a real
+    //    bullet. This is the formatting the old PowerPoint macro used to apply after download.
+    const educationRuns = candidate.education.flatMap(e => {
+      const runs: any[] = [{ text: e.institution, options: { bold: true, bullet: false, breakLine: true } }];
+      if (e.degree) {
+        const dateStr = e.dates ? ` · (${e.dates})` : '';
+        runs.push({ text: `${e.degree}${dateStr}`, options: { bold: false, bullet: { indent: EDUCATION_BULLET_INDENT_PT }, breakLine: true } });
+      }
+      return runs;
+    });
 
     // --- LEFT COLUMN: EDUCATION ---
     // Starts at 10pt, automatically shrinks if content is too long (min 6pt)
-    // Institution names have >>> prefix for VBA macro formatting
-    if (educationText) {
-      slide.addText(educationText, {
+    if (educationRuns.length > 0) {
+      slide.addText(educationRuns, {
         x: slot.education.x,
         y: slot.education.y,
         w: slot.education.w,
         h: slot.education.h,
+        fontFace: FONT_FACE,
         fontSize: fonts.education,
         color: this.hexToRgb(colors.education),
         fit: 'shrink',  // Dynamic sizing - shrinks to fit content
         shrinkToFitMin: 6,  // Minimum font size when shrinking (prevents tiny text)
         wrap: true,
         valign: 'top',
-        lineSpacing: 12,
         margin: 0  // Remove default padding to prevent coordinate shifting
       });
     }
@@ -188,6 +190,7 @@ export class SlideGenerator {
         y: slot.experience.y,
         w: slot.experience.w,
         h: nameLine.height,
+        fontFace: FONT_FACE,
         color: this.hexToRgb(colors.name),
         wrap: true,
         valign: 'top',
@@ -202,6 +205,7 @@ export class SlideGenerator {
       y: slot.experience.y + nameLine.height + 0.05,
       w: slot.experience.w,
       h: slot.experience.h - nameLine.height - 0.10, // Use most of the box height minus name
+      fontFace: FONT_FACE,
       fontSize: fonts.experience,
       color: this.hexToRgb(colors.experience),
       bullet: true,
@@ -295,6 +299,7 @@ export class SlideGenerator {
       ...deck.design.firstSlide.textBox,
       align: 'right',
       valign: 'top',
+      fontFace: FONT_FACE,
       fontSize: FIRST_SLIDE_FONT_PT,
       bold: true,
       color: '000000',
