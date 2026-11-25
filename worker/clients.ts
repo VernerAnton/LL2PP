@@ -94,7 +94,11 @@ export async function handleClients(request: Request, env: Env, parts: string[])
     if (method === 'DELETE') {
       await getRow(env, id);
       await env.FILES.delete([originalKey(id), logoKey(id)]);
-      await env.DB.prepare('DELETE FROM clients WHERE id = ?').bind(id).run();
+      // Searches for this client keep going, just without a logo
+      await env.DB.batch([
+        env.DB.prepare('UPDATE searches SET client_id = NULL WHERE client_id = ?').bind(id),
+        env.DB.prepare('DELETE FROM clients WHERE id = ?').bind(id),
+      ]);
       return json({ deleted: true });
     }
     throw new HttpError(405, 'Method not allowed');

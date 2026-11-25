@@ -4,7 +4,14 @@ import PptxGenJS from 'pptxgenjs';
 import type { CandidateData } from '../types';
 import { layoutConfig } from './layoutConfig';
 import type { SlideBox } from '../shared/apiTypes';
-import { FIRST_SLIDE_FONT_PT, FIRST_SLIDE_TEXT_BOX, firstSlideText } from './firstSlide';
+import { CANDIDATES_PER_SLIDE, SLIDE_DIMENSIONS, type CandidateSlot, type SlideDesign, type SlideKind } from '../shared/design';
+import { FIRST_SLIDE_FONT_PT, firstSlideText } from './firstSlide';
+import { downloadBlob, finishDeck } from './pptxFinish';
+
+/** Every text box uses Calibri, as the template does */
+const FONT_FACE = 'Calibri';
+/** Indent of the degree bullets in the education column (171450 EMU, as in the template) */
+const EDUCATION_BULLET_INDENT_PT = 13.5;
 
 // Configuration for overflow handling
 const OVERFLOW_CONFIG = {
@@ -19,6 +26,15 @@ export interface FirstSlideOptions {
   logo?: { dataUrl: string; placement: SlideBox };
 }
 
+/** A slide background for PptxGenJS: a path served with the app, or image data */
+export type BackgroundImage = { path: string } | { data: string };
+
+/** The design to build the deck with, and its background images */
+export interface DeckDesign {
+  design: SlideDesign;
+  backgrounds: Record<SlideKind, BackgroundImage>;
+}
+
 export interface GenerationResult {
   success: boolean;
   count: number;
@@ -29,7 +45,7 @@ export class SlideGenerator {
   /**
    * Main function to generate the presentation
    */
-  static async generate(candidates: CandidateData[], firstSlide: FirstSlideOptions): Promise<GenerationResult> {
+  static async generate(candidates: CandidateData[], firstSlide: FirstSlideOptions, deck: DeckDesign): Promise<GenerationResult> {
     try {
       // Validate input
       if (!candidates || candidates.length === 0) {
@@ -45,42 +61,44 @@ export class SlideGenerator {
       const prs = new PptxGenJS();
 
       // 1. Set up presentation properties
-      prs.layout = 'LAYOUT_4x3'; // 4:3 standard aspect ratio
+      // 4:3 (10 x 7.5 in) or widescreen 16:9 (13.33 x 7.5 in), from the design
+      prs.layout = deck.design.size === '16:9' ? 'LAYOUT_WIDE' : 'LAYOUT_4x3';
       prs.author = 'LL2PP - LongList to PowerPoint';
       prs.title = `Candidate Longlist - ${new Date().toLocaleDateString()}`;
 
       // 2. Define slide master with template background image
-      this.defineTemplateMaster(prs);
+      this.defineTemplateMaster(prs, deck.backgrounds.content);
 
       // 3. Add First Slide (title/intro slide with text box)
-      this.addFirstSlide(prs, firstSlide);
+      this.addFirstSlide(prs, firstSlide, deck);
 
       // 4. Process Candidates in Batches of 4
-      const totalSlides = Math.ceil(candidates.length / 4);
+      const totalSlides = Math.ceil(candidates.length / CANDIDATES_PER_SLIDE);
       let slideCount = 0;
 
-      for (let i = 0; i < candidates.length; i += 4) {
+      for (let i = 0; i < candidates.length; i += CANDIDATES_PER_SLIDE) {
         slideCount++;
         console.log(`📄 Generating slide ${slideCount} of ${totalSlides}...`);
 
-        const group = candidates.slice(i, i + 4);
+        const group = candidates.slice(i, i + CANDIDATES_PER_SLIDE);
 
         // Create a new slide using the template master
         const slide = prs.addSlide({ masterName: 'TEMPLATE_MASTER' });
 
         // 4. Place each candidate in their slot
         group.forEach((candidate, idx) => {
-          this.addCandidateToSlide(slide, candidate, idx);
+          this.addCandidateToSlide(slide, candidate, deck.design.contentSlide.slots[idx]);
         });
       }
 
       // 5. Add Last Slide (conclusion/outro slide)
-      this.addLastSlide(prs);
+      this.addLastSlide(prs, deck.backgrounds.last);
 
       // 6. Save with descriptive filename
       const filename = `Candidates_${candidates.length}_${new Date().toISOString().slice(0, 10)}.pptx`;
       console.log(`💾 Saving presentation: ${filename}`);
-      await prs.writeFile({ fileName: filename });
+      const pptx = (await prs.write({ outputType: 'arraybuffer' })) as ArrayBuffer;
+      downloadBlob(await finishDeck(pptx), filename);
 
       console.log(`✅ Presentation generated successfully: ${slideCount} slides, ${candidates.length} candidates`);
 
@@ -101,10 +119,8 @@ export class SlideGenerator {
    * Uses 2-column layout: Education (left) and Experience (right)
    * Format matches LinkedIn export: Name in CAPS, Company - Job Title dates
    */
-  private static addCandidateToSlide(slide: any, candidate: CandidateData, slotIndex: number) {
-    if (slotIndex >= layoutConfig.slots.length) return;
-
-    const slot = layoutConfig.slots[slotIndex];
+  private static addCandidateToSlide(slide: any, candidate: CandidateData, slot: CandidateSlot | undefined) {
+    if (!slot) return;
     const { fonts, colors } = layoutConfig;
 
     // --- DATA PREPARATION ---
@@ -121,37 +137,32 @@ export class SlideGenerator {
           .join('\n')
       : 'No operational experience found (board positions filtered)';
 
-    // 2. Education: Format Education array
-    // Institution with >>> prefix for VBA macro to identify and format (bold, capitalize, etc.)
-    // >>> prefix allows PowerPoint VBA macro to identify and bold institution names
-    const educationText = candidate.education
-      .map(e => {
-        if (e.degree) {
-          const dateStr = e.dates ? ` · (${e.dates})` : '';
-          return `>>>${e.institution}\n• ${e.degree}${dateStr}`;
-        } else {
-          // No degree - just show institution
-          return `>>>${e.institution}`;
-        }
-      })
-      .join('\n');
+    // 2. Education: one paragraph per institution (bold), followed by the degree as a real
+    //    bullet. This is the formatting the old PowerPoint macro used to apply after download.
+    const educationRuns = candidate.education.flatMap(e => {
+      const runs: any[] = [{ text: e.institution, options: { bold: true, bullet: false, breakLine: true } }];
+      if (e.degree) {
+        const dateStr = e.dates ? ` · (${e.dates})` : '';
+        runs.push({ text: `${e.degree}${dateStr}`, options: { bold: false, bullet: { indent: EDUCATION_BULLET_INDENT_PT }, breakLine: true } });
+      }
+      return runs;
+    });
 
     // --- LEFT COLUMN: EDUCATION ---
     // Starts at 10pt, automatically shrinks if content is too long (min 6pt)
-    // Institution names have >>> prefix for VBA macro formatting
-    if (educationText) {
-      slide.addText(educationText, {
+    if (educationRuns.length > 0) {
+      slide.addText(educationRuns, {
         x: slot.education.x,
         y: slot.education.y,
         w: slot.education.w,
         h: slot.education.h,
+        fontFace: FONT_FACE,
         fontSize: fonts.education,
         color: this.hexToRgb(colors.education),
         fit: 'shrink',  // Dynamic sizing - shrinks to fit content
         shrinkToFitMin: 6,  // Minimum font size when shrinking (prevents tiny text)
         wrap: true,
         valign: 'top',
-        lineSpacing: 12,
         margin: 0  // Remove default padding to prevent coordinate shifting
       });
     }
@@ -179,6 +190,7 @@ export class SlideGenerator {
         y: slot.experience.y,
         w: slot.experience.w,
         h: nameLine.height,
+        fontFace: FONT_FACE,
         color: this.hexToRgb(colors.name),
         wrap: true,
         valign: 'top',
@@ -193,6 +205,7 @@ export class SlideGenerator {
       y: slot.experience.y + nameLine.height + 0.05,
       w: slot.experience.w,
       h: slot.experience.h - nameLine.height - 0.10, // Use most of the box height minus name
+      fontFace: FONT_FACE,
       fontSize: fonts.experience,
       color: this.hexToRgb(colors.experience),
       bullet: true,
@@ -248,51 +261,45 @@ export class SlideGenerator {
   }
 
   /**
-   * Define slide master using template background image
-   * - Full template slide exported as PNG/JPG from your template PPTX
-   * - All visual elements (colors, logo, layout boxes) are burned into the background image
-   * - Text is placed on top using coordinates from layoutConfig
+   * Slide master for the candidate slides: the design's content background. All visual
+   * elements are in the image; text is placed on top at the design's positions.
    */
-  private static defineTemplateMaster(prs: any): void {
+  private static defineTemplateMaster(prs: any, background: BackgroundImage): void {
     prs.defineSlideMaster({
       title: 'TEMPLATE_MASTER',
-      background: { path: 'assets/template-background.png' }, // Full template slide as background
-      objects: []  // No additional objects needed - everything is in the background image
+      background: this.imageSource(background),
+      objects: []
     });
-
-    console.log('✅ Slide master defined with template background image');
   }
 
   /**
    * First slide: background image, the client's logo (where it was placed in the logo
-   * editor), and "LONGLIST / position / date" right-aligned in the white rectangle
+   * editor), and "LONGLIST / position / date" at the design's text position
    */
-  private static addFirstSlide(prs: any, options: FirstSlideOptions): void {
+  private static addFirstSlide(prs: any, options: FirstSlideOptions, deck: DeckDesign): void {
     const slide = prs.addSlide();
-
-    slide.addImage({
-      path: 'assets/first-slide.png',
-      x: 0,
-      y: 0,
-      w: '100%',
-      h: '100%'
-    });
+    slide.addImage({ ...this.imageSource(deck.backgrounds.first), x: 0, y: 0, w: '100%', h: '100%' });
 
     if (options.logo) {
       const { dataUrl, placement } = options.logo;
+      // A placement made for a wider design must not stick out of a narrower slide
+      const { width, height } = SLIDE_DIMENSIONS[deck.design.size];
+      const w = Math.min(placement.w, width);
+      const h = placement.h * (w / placement.w);
       slide.addImage({
         data: dataUrl.replace(/^data:/, ''), // PptxGenJS wants "image/png;base64,..."
-        x: placement.x,
-        y: placement.y,
-        w: placement.w,
-        h: placement.h
+        x: Math.min(Math.max(0, placement.x), width - w),
+        y: Math.min(Math.max(0, placement.y), height - h),
+        w,
+        h
       });
     }
 
     slide.addText(firstSlideText(options.position, new Date()), {
-      ...FIRST_SLIDE_TEXT_BOX,
+      ...deck.design.firstSlide.textBox,
       align: 'right',
       valign: 'top',
+      fontFace: FONT_FACE,
       fontSize: FIRST_SLIDE_FONT_PT,
       bold: true,
       color: '000000',
@@ -302,21 +309,16 @@ export class SlideGenerator {
   }
 
   /**
-   * Add last slide with background image only (no text boxes)
+   * Last slide: background image only
    */
-  private static addLastSlide(prs: any): void {
+  private static addLastSlide(prs: any, background: BackgroundImage): void {
     const slide = prs.addSlide();
+    slide.addImage({ ...this.imageSource(background), x: 0, y: 0, w: '100%', h: '100%' });
+  }
 
-    // Add background image (full slide)
-    slide.addImage({
-      path: 'assets/last-slide.png',
-      x: 0,
-      y: 0,
-      w: '100%',
-      h: '100%'
-    });
-
-    console.log('✅ Last slide added with background image');
+  /** PptxGenJS image source: a path, or data as "image/png;base64,..." */
+  private static imageSource(image: BackgroundImage): { path: string } | { data: string } {
+    return 'path' in image ? image : { data: image.data.replace(/^data:/, '') };
   }
 
   /**

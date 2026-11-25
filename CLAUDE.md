@@ -27,7 +27,9 @@ before adding a service worker.
 - The Anthropic API key is a Worker secret (`ANTHROPIC_API_KEY`). It must never be sent to or stored in
   the browser. Claude is called directly (not via OpenRouter), on the owner's choice: fewer parties see CVs.
 - Keep only what's needed: longlists and CV text are never stored. D1/R2 (EU jurisdiction) hold clients
-  and logos; saved searches (planned) store extracted data only and are deleted when finished.
+  and logos, and saved searches (individual CVs in batches) with their candidates' extracted data only:
+  `worker/searches.ts` whitelists the stored fields, so CV text can't be saved even if a client sends it.
+  Searches are deleted with all candidates when the owner finishes them.
 
 ## Other notes
 
@@ -36,4 +38,14 @@ before adding a service worker.
 - Extra details (location etc.) are a fixed picklist in `src/services/extraDetails.ts`, max 3 per run, not
   saved between loads. Free-text fields were tried and replaced on purpose (too prone to user error); add new
   options to that list instead.
+- The slide design (size, backgrounds, every box position) is data, not code: `src/shared/design.ts` holds
+  the built-in design (the original template) and validation; the saved design lives in D1 with uploaded
+  backgrounds in R2, edited on the DESIGN tab. Read positions from the design (`useDesign()`), never hard-code
+  them. The slide size comes from the backgrounds' proportions (4:3 or 16:9); a 16:9 design needs all three
+  backgrounds uploaded because the built-in ones are 4:3.
+- The decks come out finished: the formatting the owner's old PowerPoint macro (FormatEducationBoxes +
+  ApplyTemplate) applied is built in. `slideGenerator.ts` writes bold institution paragraphs and real
+  13.5pt degree bullets in Calibri; `pptxFinish.ts` swaps in the company theme (`src/assets/pptx-theme.xml`,
+  taken from a macro-processed deck) and sets the degree bullets to Arial. It was verified paragraph by
+  paragraph against a deck the macro had processed; keep it that way. Don't reintroduce the `>>>` markers.
 - Build output (`dist/`) is not committed.

@@ -1,0 +1,41 @@
+// Saved searches (individual CVs in batches), stored on the server as extracted data only
+import type { CandidateData } from '../types';
+import type { SavedCandidate, SearchDetail, SearchSummary } from '../shared/apiTypes';
+import type { ExtraFieldId } from './extraDetails';
+import { api, jsonBody } from './api';
+
+export const listSearches = () => api<SearchSummary[]>('searches');
+
+export const getSearch = (id: string) => api<SearchDetail>(`searches/${id}`);
+
+export const createSearch = (input: { name: string; clientId: string | null; position: string; extraFields: ExtraFieldId[] }) =>
+  api<SearchDetail>('searches', { method: 'POST', body: jsonBody(input) });
+
+export const updateSearch = (id: string, changes: { name?: string; clientId?: string | null; position?: string }) =>
+  api<SearchDetail>(`searches/${id}`, { method: 'PATCH', body: jsonBody(changes) });
+
+export const deleteSearch = (id: string) => api<{ deleted: boolean }>(`searches/${id}`, { method: 'DELETE' });
+
+/** Save extracted candidates; CV text (rawText) is stripped before sending */
+export const addCandidates = (id: string, candidates: { data: CandidateData; sourceFile: string }[]) =>
+  api<SavedCandidate[]>(`searches/${id}/candidates`, {
+    method: 'POST',
+    body: jsonBody({ candidates: candidates.map((c) => ({ data: withoutCvText(c.data), sourceFile: c.sourceFile })) }),
+  });
+
+export const updateCandidate = (searchId: string, candidateId: string, data: CandidateData) =>
+  api<{ id: string; data: CandidateData }>(`searches/${searchId}/candidates/${candidateId}`, {
+    method: 'PATCH',
+    body: jsonBody({ data: withoutCvText(data) }),
+  });
+
+export const deleteCandidate = (searchId: string, candidateId: string) =>
+  api<{ deleted: boolean }>(`searches/${searchId}/candidates/${candidateId}`, { method: 'DELETE' });
+
+export const reorderCandidates = (searchId: string, ids: string[]) =>
+  api<SearchDetail>(`searches/${searchId}/order`, { method: 'PUT', body: jsonBody({ ids }) });
+
+function withoutCvText(data: CandidateData): CandidateData {
+  const { rawText: _rawText, ...rest } = data;
+  return rest;
+}

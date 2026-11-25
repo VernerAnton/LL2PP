@@ -4,6 +4,8 @@ import type { ExtractRequest, ThinkingEffort } from '../src/shared/apiTypes';
 import { EXTRA_FIELDS, MAX_SELECTED_EXTRAS, type ExtraFieldId } from '../src/services/extraDetails';
 import { checkAccess } from './auth';
 import { handleClients } from './clients';
+import { handleSearches } from './searches';
+import { handleDesign } from './design';
 import { extractCV, getModel } from './extract';
 import { HttpError, json } from './http';
 
@@ -28,6 +30,8 @@ export default {
         return json(await extractCV(env, parseExtractRequest(await request.json())));
       }
       if (resource === 'clients') return await handleClients(request, env, rest);
+      if (resource === 'searches') return await handleSearches(request, env, rest);
+      if (resource === 'design') return await handleDesign(request, env, rest);
 
       throw new HttpError(404, 'Not found');
     } catch (error) {

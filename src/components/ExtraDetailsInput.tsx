@@ -11,13 +11,15 @@ interface ExtraDetailsInputProps {
   onSelectedChange: (selected: ExtraFieldId[]) => void;
   disabled: boolean;
   theme: ActualTheme;
+  /** Replaces the default "for this run only" note */
+  note?: string;
 }
 
 /**
  * Optional extra details to pull from each CV for this run only (e.g. location), picked from
  * a fixed list. Deliberately not saved: requests like this are rare and client-specific.
  */
-export function ExtraDetailsInput({ selected, onSelectedChange, disabled, theme }: ExtraDetailsInputProps) {
+export function ExtraDetailsInput({ selected, onSelectedChange, disabled, theme, note }: ExtraDetailsInputProps) {
   const borderColor = theme === 'dark' ? '#e0e0e0' : '#2a2a2a';
   const bgColor = theme === 'dark' ? '#2a2a2a' : '#fefdfb';
   const textColor = theme === 'dark' ? '#e0e0e0' : '#2a2a2a';
@@ -65,7 +67,7 @@ export function ExtraDetailsInput({ selected, onSelectedChange, disabled, theme 
         </span>
       </div>
       <div style={{ fontSize: '0.75rem', opacity: 0.7, marginBottom: '1rem', lineHeight: 1.4, color: textColor }}>
-        Optional, pick up to {MAX_SELECTED_EXTRAS}. For this run only, cleared on reload or reset.
+        {note ?? `Optional, pick up to ${MAX_SELECTED_EXTRAS}. For this run only, cleared on reload or reset.`}
       </div>
 
       <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>

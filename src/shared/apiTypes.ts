@@ -60,3 +60,24 @@ export interface LogoMeta {
   heightPx: number;
   placement: SlideBox;
 }
+
+export interface SearchSummary {
+  id: string;
+  name: string;
+  clientId: string | null;
+  position: string;
+  extraFields: ExtraFieldId[];
+  candidateCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SavedCandidate {
+  id: string;
+  data: CandidateData;
+  sourceFile: string;
+}
+
+export interface SearchDetail extends SearchSummary {
+  candidates: SavedCandidate[];
+}

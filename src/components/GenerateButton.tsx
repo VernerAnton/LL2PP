@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import type { CandidateData, ActualTheme } from '../types';
 import type { Client } from '../shared/apiTypes';
-import { SlideGenerator } from '../services/slideGenerator';
+import { SlideGenerator, type BackgroundImage } from '../services/slideGenerator';
+import { backgroundDataUrl, useDesign } from '../services/designService';
+import { BUILT_IN_BACKGROUNDS, SLIDE_KINDS, type SlideKind } from '../shared/design';
 import { defaultLogoPlacement } from '../services/firstSlide';
 import { logoDataUrl } from '../services/clientsService';
 
@@ -11,10 +13,13 @@ interface GenerateButtonProps {
   position: string;
   client: Client | null;
   theme: ActualTheme;
+  /** Called after a deck was generated and downloaded */
+  onGenerated?: () => void;
 }
 
-export function GenerateButton({ candidates, position, client, theme }: GenerateButtonProps) {
+export function GenerateButton({ candidates, position, client, theme, onGenerated }: GenerateButtonProps) {
   const [isGenerating, setIsGenerating] = useState(false);
+  const design = useDesign();
 
   const handleGenerate = async () => {
     if (candidates.length === 0) return;
@@ -25,11 +30,18 @@ export function GenerateButton({ candidates, position, client, theme }: Generate
       if (client?.hasLogo && client.logoWidthPx && client.logoHeightPx) {
         logo = {
           dataUrl: await logoDataUrl(client),
-          placement: client.placement ?? defaultLogoPlacement(client.logoWidthPx, client.logoHeightPx),
+          placement: client.placement ?? defaultLogoPlacement(design.firstSlide.logoArea, client.logoWidthPx, client.logoHeightPx),
         };
       }
-      const result = await SlideGenerator.generate(candidates, { position, logo });
+      // Built-in backgrounds are files served with the app; uploaded ones are embedded as data
+      const backgrounds = {} as Record<SlideKind, BackgroundImage>;
+      for (const kind of SLIDE_KINDS) {
+        backgrounds[kind] =
+          design.backgrounds[kind] === null ? { path: BUILT_IN_BACKGROUNDS[kind] } : { data: await backgroundDataUrl(design, kind) };
+      }
+      const result = await SlideGenerator.generate(candidates, { position, logo }, { design, backgrounds });
       if (!result.success) alert(`Error generating slides: ${result.error}`);
+      else onGenerated?.();
     } catch (error) {
       alert(`Error generating slides: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
