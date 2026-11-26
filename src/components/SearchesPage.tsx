@@ -3,7 +3,7 @@ import type { ActualTheme, ConcurrencyLevel } from '../types';
 import type { Client, SavedCandidate, SearchDetail, SearchSummary } from '../shared/apiTypes';
 import { MAX_SELECTED_EXTRAS, selectedExtraFields, type ExtraFieldId } from '../services/extraDetails';
 import { AIService, type ThinkingLevel } from '../services/aiService';
-import { PDFService } from '../services/pdfService';
+import { PDFService, hasUsableText } from '../services/pdfService';
 import { formatSlideDate } from '../services/firstSlide';
 import {
   addCandidates,
@@ -315,7 +315,8 @@ export function SearchesPage({ clients, thinkingLevel, concurrencyLevel, theme }
     const processFile = async (file: File) => {
       try {
         const text = (await PDFService.parsePDF(file)).join('\n\n');
-        const result = await AIService.extractCVData(text, {
+        // A scanned CV has no text layer: send the PDF itself, Claude reads the page images
+        const result = await AIService.extractCVData(hasUsableText(text) ? { text } : { pdf: file }, {
           extraFields: search.extraFields,
           level: thinkingLevel,
           source: 'individual',

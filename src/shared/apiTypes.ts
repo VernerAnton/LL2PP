@@ -4,11 +4,13 @@ import type { ExtraFieldId } from '../services/extraDetails';
 
 export type ThinkingEffort = 'low' | 'medium' | 'high';
 
-export interface ExtractRequest {
-  cvText: string;
+/** The CV as extracted text, or (for scanned CVs with no text) the PDF itself, base64-encoded */
+export type CvInput = { cvText: string } | { cvPdfBase64: string };
+
+export type ExtractRequest = CvInput & {
   extraFields: ExtraFieldId[];
   effort: ThinkingEffort;
-}
+};
 
 export interface TokenUsage {
   inputTokens: number;

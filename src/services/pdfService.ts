@@ -7,6 +7,15 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 // Use the PDF.js worker bundled with the app, so it always matches the installed pdfjs-dist version
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
+/**
+ * Whether extracted text is a real CV rather than an empty or near-empty text layer (a scanned
+ * or image-only PDF; at most a page number or a scanner's watermark). A real CV has thousands of
+ * characters.
+ */
+export function hasUsableText(text: string): boolean {
+  return text.replace(/\s+/g, '').length >= 100;
+}
+
 export class PDFService {
   /**
    * Get total page count from PDF without parsing content

@@ -22,7 +22,7 @@ import { UpdatePrompt } from './components/UpdatePrompt';
 import { useAppUpdate } from './useAppUpdate';
 import { APP_VERSION } from './version';
 import { StorageService } from './services/storageService';
-import { PDFService } from './services/pdfService';
+import { PDFService, hasUsableText } from './services/pdfService';
 import { AIService, type ThinkingLevel } from './services/aiService';
 import type { Theme, ActualTheme, ProcessingStatus, CandidateData, ProcessingError, ParseMode, ConcurrencyLevel } from './types';
 
@@ -180,12 +180,19 @@ function App() {
         const file = uploadedFiles[fileIndex];
         if (parseMode === 'longlist') {
           const cvs = await PDFService.parseAndSplit(file);
+          // Splitting into CVs needs the "Page 1 of" text, so an image-only longlist can't be used
+          if (!hasUsableText(cvs.map((cv) => cv.text).join(''))) {
+            throw new Error(
+              `"${file.name}" has no readable text: it looks like scanned images, so it can't be split into separate CVs. ` +
+                'Upload the CVs one by one instead (SEARCHES tab, or Individual mode); scanned CVs work there.'
+            );
+          }
           allCVs.push(...cvs);
         } else {
           const pageTexts = await PDFService.parsePDF(file);
           const pageCount = await PDFService.getPageCount(file);
           const pageNumbers = Array.from({ length: pageCount }, (_, i) => i + 1);
-          const cv = { text: pageTexts.join('\n\n'), pageNumbers: pageNumbers, fileName: file.name };
+          const cv = { text: pageTexts.join('\n\n'), pageNumbers: pageNumbers, fileName: file.name, file };
           allCVs.push(cv);
         }
       }
@@ -214,11 +221,23 @@ function App() {
         const batch = allCVs.slice(i, i + concurrencyLevel);
         const batchPromises = batch.map(async (cv, batchIndex) => {
           const globalIndex = i + batchIndex;
-          const result = await AIService.extractCVData(cv.text, {
+          const options = {
             extraFields: selectedExtraFields(extraFields).map((field) => field.id),
             level: thinkingLevel,
             source: parseMode,
-          });
+          };
+          let result;
+          if (hasUsableText(cv.text)) {
+            result = await AIService.extractCVData({ text: cv.text }, options);
+          } else if (cv.file) {
+            // Individual scanned CV: send the PDF itself, Claude reads the page images
+            result = await AIService.extractCVData({ pdf: cv.file }, options);
+          } else {
+            result = {
+              success: false,
+              error: 'No readable text on these pages (scanned?). Upload this CV on its own in a search or Individual mode.',
+            };
+          }
 
           return {
             index: globalIndex,

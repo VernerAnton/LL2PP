@@ -26,6 +26,8 @@ before adding a service worker.
   `ACCESS_AUD` is unset. Never weaken this; `DEV_SKIP_AUTH` belongs only in the local `.dev.vars`.
 - The Anthropic API key is a Worker secret (`ANTHROPIC_API_KEY`). It must never be sent to or stored in
   the browser. Claude is called directly (not via OpenRouter), on the owner's choice: fewer parties see CVs.
+- Scanned CVs (no text layer, see `hasUsableText` in `src/services/pdfService.ts`) go to Claude as the PDF
+  itself (a base64 document block); like CV text it passes through the Worker and is never stored.
 - Keep only what's needed: longlists and CV text are never stored. D1/R2 (EU jurisdiction) hold clients
   and logos, and saved searches (individual CVs in batches) with their candidates' extracted data only:
   `worker/searches.ts` whitelists the stored fields, so CV text can't be saved even if a client sends it.
