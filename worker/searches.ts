@@ -1,6 +1,6 @@
 // Saved searches and their candidates (extracted data only). Deleting a search removes everything.
 import type { CandidateData, ExtraDetail } from '../src/types';
-import type { SavedCandidate, SearchDetail, SearchSummary } from '../src/shared/apiTypes';
+import type { FailedFile, SavedCandidate, SearchDetail, SearchSummary } from '../src/shared/apiTypes';
 import { EXTRA_FIELDS, MAX_SELECTED_EXTRAS, type ExtraFieldId } from '../src/services/extraDetails';
 import { HttpError, json } from './http';
 
@@ -22,6 +22,26 @@ interface CandidateRow {
 }
 
 const MAX_CANDIDATES_PER_REQUEST = 50;
+const MAX_FAILED_PDF_BYTES = 15 * 1024 * 1024;
+/** Failed files are deleted after this many days at the latest (an R2 lifecycle rule does the same) */
+const FAILED_FILE_DAYS = 30;
+
+const failedKey = (searchId: string, fileId: string) => `failed/${searchId}/${fileId}`;
+
+interface FailedRow {
+  id: string;
+  group_id: string | null;
+  file_name: string;
+  error: string;
+  created_at: string;
+}
+
+/** Delete every stored failed file of a search (R2 objects and rows) */
+async function deleteAllFailed(env: Env, searchId: string): Promise<void> {
+  const { results } = await env.DB.prepare('SELECT id FROM failed_files WHERE search_id = ?').bind(searchId).all<{ id: string }>();
+  if (results.length) await env.FILES.delete(results.map((r) => failedKey(searchId, r.id)));
+  await env.DB.prepare('DELETE FROM failed_files WHERE search_id = ?').bind(searchId).run();
+}
 
 function toSummary(row: SearchRow): SearchSummary {
   return {
@@ -55,7 +75,27 @@ async function getDetail(env: Env, id: string): Promise<SearchDetail> {
     data: JSON.parse(c.data) as CandidateData,
     sourceFile: c.source_file,
   }));
-  return { ...toSummary(row), candidates };
+
+  // Failed files past their 30 days are removed here too (R2's lifecycle rule removes the PDFs)
+  const expired = await env.DB.prepare(
+    `SELECT id FROM failed_files WHERE search_id = ? AND created_at < datetime('now', '-${FAILED_FILE_DAYS} days')`
+  ).bind(id).all<{ id: string }>();
+  if (expired.results.length) {
+    await env.FILES.delete(expired.results.map((r) => failedKey(id, r.id)));
+    await env.DB.batch(expired.results.map((r) => env.DB.prepare('DELETE FROM failed_files WHERE id = ?').bind(r.id)));
+  }
+  const failed = await env.DB.prepare(
+    'SELECT id, group_id, file_name, error, created_at FROM failed_files WHERE search_id = ? ORDER BY created_at, file_name'
+  ).bind(id).all<FailedRow>();
+  const failedFiles: FailedFile[] = failed.results.map((f) => ({
+    id: f.id,
+    groupId: f.group_id,
+    fileName: f.file_name,
+    error: f.error,
+    createdAt: f.created_at,
+  }));
+
+  return { ...toSummary(row), candidates, failedFiles };
 }
 
 const touch = (env: Env, id: string) =>
@@ -187,6 +227,7 @@ export async function handleSearches(request: Request, env: Env, parts: string[]
     }
     if (method === 'DELETE') {
       await getSearchRow(env, id);
+      await deleteAllFailed(env, id);
       await env.DB.batch([
         env.DB.prepare('DELETE FROM candidates WHERE search_id = ?').bind(id),
         env.DB.prepare('DELETE FROM searches WHERE id = ?').bind(id),
@@ -214,6 +255,8 @@ export async function handleSearches(request: Request, env: Env, parts: string[]
     ]);
     return json(await getDetail(env, id));
   }
+
+  if (sub === 'failed') return handleFailed(request, env, id, candidateId);
 
   if (sub !== 'candidates') throw new HttpError(404, 'Not found');
 
@@ -254,6 +297,60 @@ export async function handleSearches(request: Request, env: Env, parts: string[]
   }
   if (method === 'DELETE') {
     await env.DB.batch([env.DB.prepare('DELETE FROM candidates WHERE id = ?').bind(candidateId), touch(env, id)]);
+    return json({ deleted: true });
+  }
+  throw new HttpError(405, 'Method not allowed');
+}
+
+// --- failed files: /api/searches/:id/failed[/:fileId] -------------------------------------------
+
+async function handleFailed(request: Request, env: Env, searchId: string, fileId: string | undefined): Promise<Response> {
+  const method = request.method;
+  await getSearchRow(env, searchId);
+
+  if (!fileId) {
+    // Keep a file that failed: multipart "file" (the PDF) + "error"
+    if (method === 'POST') {
+      const form = await request.formData();
+      const file = form.get('file');
+      if (!(file instanceof File)) throw new HttpError(400, 'No file');
+      if (file.size > MAX_FAILED_PDF_BYTES) throw new HttpError(400, 'The PDF is too large to keep (max 15 MB)');
+      const head = new Uint8Array(await file.slice(0, 5).arrayBuffer());
+      if (String.fromCharCode(...head) !== '%PDF-') throw new HttpError(400, 'That file is not a PDF');
+      const newId = crypto.randomUUID();
+      await env.FILES.put(failedKey(searchId, newId), file.stream(), { httpMetadata: { contentType: 'application/pdf' } });
+      const groupId = text(form.get('groupId'), 'Group', 100) || null;
+      await env.DB.prepare('INSERT INTO failed_files (id, search_id, group_id, file_name, error) VALUES (?, ?, ?, ?, ?)')
+        .bind(newId, searchId, groupId, text(file.name || 'CV.pdf', 'File name', 300, true), text(form.get('error'), 'Error', 1000))
+        .run();
+      const created: FailedFile = { id: newId, groupId, fileName: file.name, error: String(form.get('error') ?? ''), createdAt: '' };
+      return json(created, 201);
+    }
+    // Remove all of them
+    if (method === 'DELETE') {
+      await deleteAllFailed(env, searchId);
+      return json({ deleted: true });
+    }
+    throw new HttpError(405, 'Method not allowed');
+  }
+
+  const row = await env.DB.prepare('SELECT id FROM failed_files WHERE id = ? AND search_id = ?').bind(fileId, searchId).first();
+  if (!row) throw new HttpError(404, 'File not found');
+
+  if (method === 'GET') {
+    const object = await env.FILES.get(failedKey(searchId, fileId));
+    if (!object) throw new HttpError(404, 'The stored file has expired; upload it again');
+    return new Response(object.body, { headers: { 'content-type': 'application/pdf', 'cache-control': 'no-store' } });
+  }
+  if (method === 'PATCH') {
+    // A retry failed again: keep the file, record the new error
+    const body = await request.json<{ error?: unknown }>();
+    await env.DB.prepare('UPDATE failed_files SET error = ? WHERE id = ?').bind(text(body.error, 'Error', 1000), fileId).run();
+    return json({ updated: true });
+  }
+  if (method === 'DELETE') {
+    await env.FILES.delete(failedKey(searchId, fileId));
+    await env.DB.prepare('DELETE FROM failed_files WHERE id = ?').bind(fileId).run();
     return json({ deleted: true });
   }
   throw new HttpError(405, 'Method not allowed');

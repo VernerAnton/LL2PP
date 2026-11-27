@@ -7,6 +7,8 @@ LL2PP reads CV PDFs (one longlist PDF or individual CVs), uses Claude to extract
 ## Features
 
 - **PDF parsing** in the browser with PDF.js. Longlist mode splits one PDF into CVs at each "Page 1 of …" marker; individual mode treats each PDF as one CV.
+- **Bind CVs**: in a search, files that belong to one person (a CV in parts, two language versions, a CV plus an attachment) can be bound in the BIND CVs pop-up and are read as one profile. Files with similar names (80%+, ignoring words like "CV" or "2") are suggested with a quick-bind button, never bound automatically. Uploads add to the list until processed.
+- **Retry without re-uploading**: in a search, CV files that couldn't be read are kept in a "Couldn't read" list with Retry / Retry all / Remove / Remove all. They're deleted when a retry works, when removed, when the search is finished, and after 30 days at the latest.
 - **Scanned CVs**: an individual CV PDF with no readable text (a scan or picture) is sent to Claude as the PDF itself, and Claude reads the page images. Not stored, like CV text. Scanned longlists can't be split into CVs and get a clear message instead.
 - **Claude extraction** on the server with structured outputs, so every answer is valid JSON in the expected shape. Board roles are excluded and dates normalised to `MM/YYYY - MM/YYYY` or `YYYY - YYYY`. The Anthropic API key lives only on the server.
 - **Always the newest Claude Sonnet**: the server asks the Anthropic Models API for the newest active Sonnet that supports what the app needs, falling back to Claude Sonnet 5.5.

@@ -1,8 +1,8 @@
 // Saved searches (individual CVs in batches), stored on the server as extracted data only
 import type { CandidateData } from '../types';
-import type { SavedCandidate, SearchDetail, SearchSummary } from '../shared/apiTypes';
+import type { FailedFile, SavedCandidate, SearchDetail, SearchSummary } from '../shared/apiTypes';
 import type { ExtraFieldId } from './extraDetails';
-import { api, jsonBody } from './api';
+import { api, ApiError, jsonBody } from './api';
 
 export const listSearches = () => api<SearchSummary[]>('searches');
 
@@ -39,3 +39,32 @@ function withoutCvText(data: CandidateData): CandidateData {
   const { rawText: _rawText, ...rest } = data;
   return rest;
 }
+
+// --- Files that couldn't be read, kept for a retry ---------------------------------------------
+
+/** Keep a file that couldn't be read. Files bound as one candidate share a groupId. */
+export function keepFailedFile(searchId: string, file: Blob, fileName: string, error: string, groupId?: string): Promise<FailedFile> {
+  const form = new FormData();
+  form.append('file', file, fileName);
+  form.append('error', error.slice(0, 1000));
+  if (groupId) form.append('groupId', groupId);
+  return api<FailedFile>(`searches/${searchId}/failed`, { method: 'POST', body: form });
+}
+
+export async function getFailedFile(searchId: string, fileId: string): Promise<Blob> {
+  const response = await fetch(`/api/searches/${searchId}/failed/${fileId}`);
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new ApiError(response.status, (body as { error?: string } | null)?.error ?? 'Could not load the stored file');
+  }
+  return response.blob();
+}
+
+export const updateFailedFile = (searchId: string, fileId: string, error: string) =>
+  api<{ updated: boolean }>(`searches/${searchId}/failed/${fileId}`, { method: 'PATCH', body: jsonBody({ error: error.slice(0, 1000) }) });
+
+export const removeFailedFile = (searchId: string, fileId: string) =>
+  api<{ deleted: boolean }>(`searches/${searchId}/failed/${fileId}`, { method: 'DELETE' });
+
+export const removeAllFailedFiles = (searchId: string) =>
+  api<{ deleted: boolean }>(`searches/${searchId}/failed`, { method: 'DELETE' });

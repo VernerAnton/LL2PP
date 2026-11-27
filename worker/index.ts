@@ -1,6 +1,6 @@
 // LL2PP Worker: serves the API. The React app itself is served as static assets; only /api/*
 // reaches this code (see "run_worker_first" in wrangler.jsonc).
-import type { CvInput, ExtractRequest, ThinkingEffort } from '../src/shared/apiTypes';
+import { MAX_DOCUMENTS_PER_CANDIDATE, type CvDocument, type ExtractRequest, type ThinkingEffort } from '../src/shared/apiTypes';
 import { EXTRA_FIELDS, MAX_SELECTED_EXTRAS, type ExtraFieldId } from '../src/services/extraDetails';
 import { checkAccess } from './auth';
 import { handleClients } from './clients';
@@ -47,23 +47,39 @@ export default {
 
 function parseExtractRequest(body: unknown): ExtractRequest {
   const b = (body ?? {}) as Record<string, unknown>;
-  let cv: CvInput;
-  if (typeof b.cvText === 'string' && b.cvText.trim()) {
-    if (b.cvText.length > MAX_CV_CHARS) throw new HttpError(400, 'CV text is too long');
-    cv = { cvText: b.cvText };
-  } else if (typeof b.cvPdfBase64 === 'string' && b.cvPdfBase64) {
-    // Scanned CV: the PDF goes to Claude, which reads the pages as images
-    if (b.cvPdfBase64.length > MAX_PDF_BASE64_CHARS) throw new HttpError(400, 'The PDF is too large (max 15 MB)');
-    if (!b.cvPdfBase64.startsWith('JVBERi')) throw new HttpError(400, 'That file is not a PDF'); // "%PDF" in base64
-    cv = { cvPdfBase64: b.cvPdfBase64 };
-  } else {
-    throw new HttpError(400, 'No CV text or PDF was sent');
-  }
+  // Older open tabs send a single cvText / cvPdfBase64; current ones send documents[]
+  const raw: unknown[] = Array.isArray(b.documents)
+    ? b.documents
+    : typeof b.cvText === 'string'
+      ? [{ text: b.cvText }]
+      : typeof b.cvPdfBase64 === 'string'
+        ? [{ pdfBase64: b.cvPdfBase64 }]
+        : [];
+  if (raw.length === 0) throw new HttpError(400, 'No CV text or PDF was sent');
+  if (raw.length > MAX_DOCUMENTS_PER_CANDIDATE) throw new HttpError(400, `At most ${MAX_DOCUMENTS_PER_CANDIDATE} documents per candidate`);
+  let textChars = 0;
+  let pdfChars = 0;
+  const documents: CvDocument[] = raw.map((d) => {
+    const doc = (d ?? {}) as Record<string, unknown>;
+    if (typeof doc.text === 'string' && doc.text.trim()) {
+      textChars += doc.text.length;
+      return { text: doc.text };
+    }
+    if (typeof doc.pdfBase64 === 'string' && doc.pdfBase64) {
+      // Scanned CV: the PDF goes to Claude, which reads the pages as images
+      if (!doc.pdfBase64.startsWith('JVBERi')) throw new HttpError(400, 'That file is not a PDF'); // "%PDF" in base64
+      pdfChars += doc.pdfBase64.length;
+      return { pdfBase64: doc.pdfBase64 };
+    }
+    throw new HttpError(400, 'A document has no text and no PDF');
+  });
+  if (textChars > MAX_CV_CHARS) throw new HttpError(400, 'CV text is too long');
+  if (pdfChars > MAX_PDF_BASE64_CHARS) throw new HttpError(400, 'The PDFs are too large (max 15 MB together)');
   if (!EFFORTS.includes(b.effort as ThinkingEffort)) throw new HttpError(400, 'Invalid effort');
   const ids = Array.isArray(b.extraFields) ? b.extraFields : [];
   const known = new Set(EXTRA_FIELDS.map((f) => f.id));
   if (ids.length > MAX_SELECTED_EXTRAS || !ids.every((id) => known.has(id as ExtraFieldId))) {
     throw new HttpError(400, 'Invalid extra details');
   }
-  return { ...cv, extraFields: ids as ExtraFieldId[], effort: b.effort as ThinkingEffort };
+  return { documents, extraFields: ids as ExtraFieldId[], effort: b.effort as ThinkingEffort };
 }

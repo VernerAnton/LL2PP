@@ -32,6 +32,11 @@ before adding a service worker.
   and logos, and saved searches (individual CVs in batches) with their candidates' extracted data only:
   `worker/searches.ts` whitelists the stored fields, so CV text can't be saved even if a client sends it.
   Searches are deleted with all candidates when the owner finishes them.
+- The one exception, on the owner's request: CV files that couldn't be read are kept per search
+  (`failed_files` in D1, PDFs in R2 under `failed/<search>/`) so they can be retried without uploading
+  again. Each is deleted when a retry succeeds, when removed, when the search is finished, and after 30
+  days at the latest (D1 pruning in `worker/searches.ts` plus the R2 lifecycle rule
+  `failed-cv-files-30-days`). Don't keep successfully read CVs this way.
 
 ## Other notes
 
@@ -50,4 +55,8 @@ before adding a service worker.
   13.5pt degree bullets in Calibri; `pptxFinish.ts` swaps in the company theme (`src/assets/pptx-theme.xml`,
   taken from a macro-processed deck) and sets the degree bullets to Arial. It was verified paragraph by
   paragraph against a deck the macro had processed; keep it that way. Don't reintroduce the `>>>` markers.
+- Bound CVs: an extraction request carries 1-5 `documents` (text or PDF) for one candidate; several
+  documents are combined into one profile (`worker/extract.ts`). The owner binds files in the BIND CVs
+  pop-up; name similarity (`src/services/bindSuggestions.ts`) only ever suggests, because two people can
+  share a name. Never bind automatically. Failed bound files share a `group_id` and are retried together.
 - Build output (`dist/`) is not committed.

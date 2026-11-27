@@ -3,7 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import { z } from 'zod';
 import type { CandidateData, WorkExperience, Education, ExtraDetail } from '../src/types';
-import type { CvInput, ExtractRequest, ExtractResponse, ThinkingEffort } from '../src/shared/apiTypes';
+import type { CvDocument, ExtractRequest, ExtractResponse, ThinkingEffort } from '../src/shared/apiTypes';
 import { selectedExtraFields, type ExtraField } from '../src/services/extraDetails';
 
 // Schema for the extracted CV data. It is sent to the API as a structured-output JSON schema,
@@ -42,14 +42,29 @@ function buildSchema(extraFields: ExtraField[]) {
 }
 
 /**
- * The instructions for one CV. With text the CV follows the instructions; for a scanned CV
- * (cvText null) the PDF is attached before them and Claude reads the pages as images.
+ * The instructions for one candidate. Text documents are included in the message; PDFs (scanned
+ * CVs) are attached before it and Claude reads their pages as images. Several documents mean the
+ * owner bound them together as one candidate (a CV in parts, two language versions, a CV plus an
+ * attachment), so they are combined into one profile.
  */
-function buildUserMessage(cvText: string | null, extraFields: ExtraField[]): string {
-  const intro = cvText === null
-    ? 'Extract the candidate data from the CV in the attached PDF. It is scanned, so read it from the page images.'
-    : 'Extract the candidate data from this CV.';
-  const cvPart = cvText === null ? '' : `\n\nCV:\n\n${cvText}`;
+function buildUserMessage(texts: string[], pdfCount: number, extraFields: ExtraField[]): string {
+  const total = texts.length + pdfCount;
+  let intro: string;
+  if (total === 1) {
+    intro = pdfCount
+      ? 'Extract the candidate data from the CV in the attached PDF. It is scanned, so read it from the page images.'
+      : 'Extract the candidate data from this CV.';
+  } else {
+    const parts = [pdfCount ? `${pdfCount} attached PDF${pdfCount > 1 ? 's' : ''} (scanned: read the page images)` : '', texts.length ? `${texts.length} text document${texts.length > 1 ? 's' : ''} below` : '']
+      .filter(Boolean)
+      .join(' and ');
+    intro = `These ${total} documents (${parts}) all belong to the same candidate: for example a CV in several parts, the same CV in two languages, or a CV and an attachment. Combine them into ONE profile. List each position and each qualification once, use the most complete details from any of the documents (e.g. dates missing in one), and where the same entry appears in two languages, use the English version.`;
+  }
+  const cvPart = texts.length === 0
+    ? ''
+    : texts.length === 1 && total === 1
+      ? `\n\nCV:\n\n${texts[0]}`
+      : texts.map((t, i) => `\n\nDOCUMENT ${i + 1} (text):\n\n${t}`).join('');
   if (extraFields.length === 0) return `${intro}${cvPart}`;
   const fieldList = extraFields.map((field) => `- ${field.id}: ${field.instruction}`).join('\n');
   const today = new Date().toISOString().slice(0, 10);
@@ -61,12 +76,19 @@ Each value is shown after the candidate's name on a slide, so keep it short and 
 Today's date: ${today}${cvPart}`;
 }
 
-/** The user turn: CV text, or the scanned PDF (document first) followed by the instructions */
-function buildContent(cv: CvInput, extraFields: ExtraField[]): Anthropic.Beta.BetaContentBlockParam[] | string {
-  if ('cvText' in cv) return buildUserMessage(cv.cvText, extraFields);
+/** The user turn: PDFs first (document blocks), then the instructions with any text documents */
+function buildContent(documents: CvDocument[], extraFields: ExtraField[]): Anthropic.Beta.BetaContentBlockParam[] | string {
+  const texts = documents.flatMap((d) => ('text' in d ? [d.text] : []));
+  const pdfs = documents.flatMap((d) => ('pdfBase64' in d ? [d.pdfBase64] : []));
+  const message = buildUserMessage(texts, pdfs.length, extraFields);
+  if (pdfs.length === 0) return message;
   return [
-    { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: cv.cvPdfBase64 } },
-    { type: 'text', text: buildUserMessage(null, extraFields) },
+    ...pdfs.map((data, i): Anthropic.Beta.BetaContentBlockParam => ({
+      type: 'document',
+      source: { type: 'base64', media_type: 'application/pdf', data },
+      ...(pdfs.length > 1 ? { title: `Scanned document ${i + 1}` } : {}),
+    })),
+    { type: 'text', text: message },
   ];
 }
 
@@ -172,7 +194,7 @@ export async function extractCV(env: Env, request: ExtractRequest): Promise<Extr
   for (let attempt = 1; attempt <= 2; attempt++) {
     const model = await getModel(env);
     try {
-      return await performExtraction(anthropic, model, request, fields, request.effort);
+      return await performExtraction(anthropic, model, request.documents, fields, request.effort);
     } catch (error) {
       lastError = describeError(error);
       outputProblem = error instanceof OutputError;
@@ -194,7 +216,7 @@ export async function extractCV(env: Env, request: ExtractRequest): Promise<Extr
 async function performExtraction(
   anthropic: Anthropic,
   model: string,
-  cv: CvInput,
+  documents: CvDocument[],
   extraFields: ExtraField[],
   effort: ThinkingEffort
 ): Promise<ExtractResponse> {
@@ -203,7 +225,7 @@ async function performExtraction(
     // Leaves room for thinking tokens as well as the JSON answer
     max_tokens: 16000,
     system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: buildContent(cv, extraFields) }],
+    messages: [{ role: 'user', content: buildContent(documents, extraFields) }],
     // Thinking is adaptive (Claude decides how much to think); effort sets how deep it goes
     output_config: {
       effort,
