@@ -228,10 +228,10 @@ function App() {
           };
           let result;
           if (hasUsableText(cv.text)) {
-            result = await AIService.extractCVData({ text: cv.text }, options);
+            result = await AIService.extractCVData([{ text: cv.text }], options);
           } else if (cv.file) {
             // Individual scanned CV: send the PDF itself, Claude reads the page images
-            result = await AIService.extractCVData({ pdf: cv.file }, options);
+            result = await AIService.extractCVData([{ pdf: cv.file }], options);
           } else {
             result = {
               success: false,

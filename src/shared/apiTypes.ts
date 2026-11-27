@@ -4,13 +4,17 @@ import type { ExtraFieldId } from '../services/extraDetails';
 
 export type ThinkingEffort = 'low' | 'medium' | 'high';
 
-/** The CV as extracted text, or (for scanned CVs with no text) the PDF itself, base64-encoded */
-export type CvInput = { cvText: string } | { cvPdfBase64: string };
+/** One document of a candidate: extracted text, or (for scanned CVs with no text) the PDF, base64-encoded */
+export type CvDocument = { text: string } | { pdfBase64: string };
 
-export type ExtractRequest = CvInput & {
+/** Up to MAX_DOCUMENTS_PER_CANDIDATE documents that belong to one candidate (bound together by the owner) */
+export interface ExtractRequest {
+  documents: CvDocument[];
   extraFields: ExtraFieldId[];
   effort: ThinkingEffort;
-};
+}
+
+export const MAX_DOCUMENTS_PER_CANDIDATE = 5;
 
 export interface TokenUsage {
   inputTokens: number;
@@ -83,6 +87,8 @@ export interface SavedCandidate {
 /** A CV file that couldn't be processed, kept (up to 30 days) so it can be retried */
 export interface FailedFile {
   id: string;
+  /** Files bound together as one candidate share a group id; null for a single file */
+  groupId: string | null;
   fileName: string;
   error: string;
   createdAt: string;

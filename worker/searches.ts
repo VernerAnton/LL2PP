@@ -30,6 +30,7 @@ const failedKey = (searchId: string, fileId: string) => `failed/${searchId}/${fi
 
 interface FailedRow {
   id: string;
+  group_id: string | null;
   file_name: string;
   error: string;
   created_at: string;
@@ -84,10 +85,11 @@ async function getDetail(env: Env, id: string): Promise<SearchDetail> {
     await env.DB.batch(expired.results.map((r) => env.DB.prepare('DELETE FROM failed_files WHERE id = ?').bind(r.id)));
   }
   const failed = await env.DB.prepare(
-    'SELECT id, file_name, error, created_at FROM failed_files WHERE search_id = ? ORDER BY created_at, file_name'
+    'SELECT id, group_id, file_name, error, created_at FROM failed_files WHERE search_id = ? ORDER BY created_at, file_name'
   ).bind(id).all<FailedRow>();
   const failedFiles: FailedFile[] = failed.results.map((f) => ({
     id: f.id,
+    groupId: f.group_id,
     fileName: f.file_name,
     error: f.error,
     createdAt: f.created_at,
@@ -317,10 +319,11 @@ async function handleFailed(request: Request, env: Env, searchId: string, fileId
       if (String.fromCharCode(...head) !== '%PDF-') throw new HttpError(400, 'That file is not a PDF');
       const newId = crypto.randomUUID();
       await env.FILES.put(failedKey(searchId, newId), file.stream(), { httpMetadata: { contentType: 'application/pdf' } });
-      await env.DB.prepare('INSERT INTO failed_files (id, search_id, file_name, error) VALUES (?, ?, ?, ?)')
-        .bind(newId, searchId, text(file.name || 'CV.pdf', 'File name', 300, true), text(form.get('error'), 'Error', 1000))
+      const groupId = text(form.get('groupId'), 'Group', 100) || null;
+      await env.DB.prepare('INSERT INTO failed_files (id, search_id, group_id, file_name, error) VALUES (?, ?, ?, ?, ?)')
+        .bind(newId, searchId, groupId, text(file.name || 'CV.pdf', 'File name', 300, true), text(form.get('error'), 'Error', 1000))
         .run();
-      const created: FailedFile = { id: newId, fileName: file.name, error: String(form.get('error') ?? ''), createdAt: '' };
+      const created: FailedFile = { id: newId, groupId, fileName: file.name, error: String(form.get('error') ?? ''), createdAt: '' };
       return json(created, 201);
     }
     // Remove all of them

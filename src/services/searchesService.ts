@@ -42,10 +42,12 @@ function withoutCvText(data: CandidateData): CandidateData {
 
 // --- Files that couldn't be read, kept for a retry ---------------------------------------------
 
-export function keepFailedFile(searchId: string, file: Blob, fileName: string, error: string): Promise<FailedFile> {
+/** Keep a file that couldn't be read. Files bound as one candidate share a groupId. */
+export function keepFailedFile(searchId: string, file: Blob, fileName: string, error: string, groupId?: string): Promise<FailedFile> {
   const form = new FormData();
   form.append('file', file, fileName);
   form.append('error', error.slice(0, 1000));
+  if (groupId) form.append('groupId', groupId);
   return api<FailedFile>(`searches/${searchId}/failed`, { method: 'POST', body: form });
 }
 

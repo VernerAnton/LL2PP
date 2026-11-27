@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ActualTheme, ConcurrencyLevel } from '../types';
-import type { Client, SavedCandidate, SearchDetail, SearchSummary } from '../shared/apiTypes';
+import type { Client, FailedFile, SavedCandidate, SearchDetail, SearchSummary } from '../shared/apiTypes';
 import { MAX_SELECTED_EXTRAS, selectedExtraFields, type ExtraFieldId } from '../services/extraDetails';
-import { AIService, type ThinkingLevel } from '../services/aiService';
+import { AIService, type CvPart, type ThinkingLevel } from '../services/aiService';
 import { PDFService, hasUsableText } from '../services/pdfService';
 import { formatSlideDate } from '../services/firstSlide';
 import {
@@ -26,6 +26,7 @@ import { FileUploader } from './FileUploader';
 import { GenerateButton } from './GenerateButton';
 import { ManualCopyOutput } from './ManualCopyOutput';
 import { CandidateEditor } from './CandidateEditor';
+import { BindDialog, bindEntries, bindSuggestions, unbindEntry, type UploadEntry } from './BindDialog';
 
 interface SearchesPageProps {
   clients: Client[];
@@ -65,7 +66,9 @@ export function SearchesPage({ clients, thinkingLevel, concurrencyLevel, theme }
   const [editPosition, setEditPosition] = useState('');
 
   // Adding CVs
-  const [files, setFiles] = useState<File[]>([]);
+  // Files chosen for the next run: each entry is one CV file, or several bound as one candidate
+  const [entries, setEntries] = useState<UploadEntry[]>([]);
+  const [bindOpen, setBindOpen] = useState(false);
   const [uploaderKey, setUploaderKey] = useState(0);
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
@@ -107,7 +110,7 @@ export function SearchesPage({ clients, thinkingLevel, concurrencyLevel, theme }
     setEditName(detail.name);
     setEditClientId(detail.clientId ?? '');
     setEditPosition(detail.position);
-    setFiles([]);
+    setEntries([]);
     setUploaderKey((k) => k + 1);
     setFailures([]);
     setBatchCost(null);
@@ -297,16 +300,16 @@ export function SearchesPage({ clients, thinkingLevel, concurrencyLevel, theme }
     setEditPosition(detail.position);
   };
 
-  /** One CV to process: a new upload, or a stored failed file being retried */
+  /** One candidate to process: one or more files (bound together), new or stored after failing */
   interface Job {
-    fileName: string;
-    getFile: () => Promise<Blob>;
-    failedId?: string;
+    label: string; // file names, joined with " + "
+    files: { name: string; get: () => Promise<Blob>; failedId?: string }[];
   }
 
   /**
-   * Extract and save each CV. A CV that fails is kept on the server (failed files) so it can be
-   * retried later without uploading it again; a retry that succeeds removes the stored file.
+   * Extract and save each candidate. Bound files are read together as one profile. A candidate
+   * that fails is kept on the server (its files, still bound) so it can be retried later without
+   * uploading again; a retry that succeeds removes the stored files.
    */
   const runJobs = async (jobs: Job[]) => {
     cancelRef.current = false;
@@ -323,13 +326,18 @@ export function SearchesPage({ clients, thinkingLevel, concurrencyLevel, theme }
     let done = 0;
 
     const processJob = async (job: Job) => {
-      let file: Blob | null = null;
+      let blobs: Blob[] | null = null;
       let failure: string;
+      const failedIds = job.files.flatMap((f) => (f.failedId ? [f.failedId] : []));
       try {
-        file = await job.getFile();
-        const text = (await PDFService.parsePDF(file as File)).join('\n\n');
-        // A scanned CV has no text layer: send the PDF itself, Claude reads the page images
-        const result = await AIService.extractCVData(hasUsableText(text) ? { text } : { pdf: file }, {
+        blobs = await Promise.all(job.files.map((f) => f.get()));
+        const parts: CvPart[] = [];
+        for (const blob of blobs) {
+          const text = (await PDFService.parsePDF(blob as File)).join('\n\n');
+          // A scanned CV has no text layer: send the PDF itself, Claude reads the page images
+          parts.push(hasUsableText(text) ? { text } : { pdf: blob });
+        }
+        const result = await AIService.extractCVData(parts, {
           extraFields: search.extraFields,
           level: thinkingLevel,
           source: 'individual',
@@ -337,13 +345,12 @@ export function SearchesPage({ clients, thinkingLevel, concurrencyLevel, theme }
         cost += result.usage?.estimatedCost ?? 0;
         if (result.success && result.data) {
           // Saved right away, so a closed tab or a failure later in the batch loses nothing
-          const [saved] = await addCandidates(searchId, [{ data: result.data, sourceFile: job.fileName }]);
+          const [saved] = await addCandidates(searchId, [{ data: result.data, sourceFile: job.label }]);
           added++;
           setSearch((s) => (s ? { ...s, candidates: [...s.candidates, saved], candidateCount: s.candidates.length + 1 } : s));
-          if (job.failedId) {
-            const failedId = job.failedId;
-            await removeFailedFile(searchId, failedId);
-            setSearch((s) => (s ? { ...s, failedFiles: s.failedFiles.filter((f) => f.id !== failedId) } : s));
+          if (failedIds.length) {
+            await Promise.all(failedIds.map((id) => removeFailedFile(searchId, id)));
+            setSearch((s) => (s ? { ...s, failedFiles: s.failedFiles.filter((f) => !failedIds.includes(f.id)) } : s));
           }
           return;
         }
@@ -355,20 +362,22 @@ export function SearchesPage({ clients, thinkingLevel, concurrencyLevel, theme }
         setProgress({ done, total: jobs.length });
       }
 
-      // Failed: keep the file for a later retry
+      // Failed: keep the files (still bound together) for a later retry
       try {
-        if (job.failedId) {
-          const failedId = job.failedId;
-          await updateFailedFile(searchId, failedId, failure);
-          setSearch((s) => (s ? { ...s, failedFiles: s.failedFiles.map((f) => (f.id === failedId ? { ...f, error: failure } : f)) } : s));
-        } else if (file) {
-          const kept = await keepFailedFile(searchId, file, job.fileName, failure);
-          setSearch((s) => (s ? { ...s, failedFiles: [...s.failedFiles, kept] } : s));
+        if (failedIds.length) {
+          await Promise.all(failedIds.map((id) => updateFailedFile(searchId, id, failure)));
+          setSearch((s) => (s ? { ...s, failedFiles: s.failedFiles.map((f) => (failedIds.includes(f.id) ? { ...f, error: failure } : f)) } : s));
+        } else if (blobs) {
+          const groupId = job.files.length > 1 ? crypto.randomUUID() : undefined;
+          const kept = await Promise.all(
+            job.files.map((f, i) => keepFailedFile(searchId, blobs![i], f.name, failure, groupId))
+          );
+          setSearch((s) => (s ? { ...s, failedFiles: [...s.failedFiles, ...kept] } : s));
         } else {
-          unkept.push({ fileName: job.fileName, error: failure });
+          unkept.push({ fileName: job.label, error: failure });
         }
       } catch (e) {
-        unkept.push({ fileName: job.fileName, error: `${failure} (and the file couldn't be kept: ${e instanceof Error ? e.message : String(e)})` });
+        unkept.push({ fileName: job.label, error: `${failure} (and the files couldn't be kept: ${e instanceof Error ? e.message : String(e)})` });
       }
     };
 
@@ -382,31 +391,51 @@ export function SearchesPage({ clients, thinkingLevel, concurrencyLevel, theme }
     setDownloaded(false);
   };
 
+  /** Each upload adds to the list (the same file twice is ignored) */
+  const addFiles = (picked: File[]) => {
+    setEntries((current) => {
+      const have = new Set(current.flatMap((e) => e.files.map((f) => `${f.name}|${f.size}`)));
+      const fresh = picked.filter((f) => !have.has(`${f.name}|${f.size}`));
+      return [...current, ...fresh.map((file) => ({ id: crypto.randomUUID(), files: [file] }))];
+    });
+    setUploaderKey((k) => k + 1); // ready for the next pick
+  };
+
   const handleProcess = async () => {
-    if (files.length === 0) return;
-    const known = new Set(search.candidates.map((c) => c.sourceFile).filter(Boolean));
-    const repeats = files.filter((f) => known.has(f.name)).map((f) => f.name);
+    if (entries.length === 0) return;
+    const known = new Set(search.candidates.flatMap((c) => c.sourceFile.split(' + ')).filter(Boolean));
+    const repeats = entries.flatMap((e) => e.files.map((f) => f.name)).filter((name) => known.has(name));
     if (repeats.length && !confirm(`Already added to this search:\n${repeats.join('\n')}\n\nAdd them again?`)) return;
-    const jobs: Job[] = files.map((file) => ({ fileName: file.name, getFile: async () => file }));
-    setFiles([]);
+    const jobs: Job[] = entries.map((e) => ({
+      label: e.files.map((f) => f.name).join(' + '),
+      files: e.files.map((file) => ({ name: file.name, get: async () => file })),
+    }));
+    setEntries([]);
     setUploaderKey((k) => k + 1);
     await runJobs(jobs);
   };
 
-  const retryFailed = (ids: string[]) =>
+  /** Stored failed files, as candidates: bound files together, others one by one */
+  const failedGroups = groupFailed(search.failedFiles);
+  const fileCount = entries.reduce((n, e) => n + e.files.length, 0);
+  const suggestions = bindSuggestions(entries);
+
+  /** Retry the given groups of stored files (each group is read as one candidate) */
+  const retryFailed = (groups: FailedFile[][]) =>
     runJobs(
-      search.failedFiles
-        .filter((f) => ids.includes(f.id))
-        .map((f) => ({ fileName: f.fileName, failedId: f.id, getFile: () => getFailedFile(search.id, f.id) }))
+      groups.map((group) => ({
+        label: group.map((f) => f.fileName).join(' + '),
+        files: group.map((f) => ({ name: f.fileName, failedId: f.id, get: () => getFailedFile(search.id, f.id) })),
+      }))
     );
 
-  const removeFailed = (ids: string[] | 'all') =>
+  const removeFailed = (groups: FailedFile[][] | 'all') =>
     run(async () => {
-      const count = ids === 'all' ? search.failedFiles.length : ids.length;
-      if (ids === 'all' && !confirm(`Remove all ${count} files that couldn't be read? They are deleted from the server.`)) return;
-      if (ids === 'all') await removeAllFailedFiles(search.id);
-      else await Promise.all(ids.map((id) => removeFailedFile(search.id, id)));
-      setSearch((s) => (s ? { ...s, failedFiles: ids === 'all' ? [] : s.failedFiles.filter((f) => !ids.includes(f.id)) } : s));
+      if (groups === 'all' && !confirm(`Remove all ${failedGroups.length} that couldn't be read? The files are deleted from the server.`)) return;
+      if (groups === 'all') await removeAllFailedFiles(search.id);
+      else await Promise.all(groups.flat().map((f) => removeFailedFile(search.id, f.id)));
+      const ids = groups === 'all' ? null : new Set(groups.flat().map((f) => f.id));
+      setSearch((s) => (s ? { ...s, failedFiles: ids ? s.failedFiles.filter((f) => !ids.has(f.id)) : [] } : s));
     });
 
   const move = (index: number, delta: number) =>
@@ -481,16 +510,77 @@ export function SearchesPage({ clients, thinkingLevel, concurrencyLevel, theme }
         <div style={{ ...hint, marginBottom: '1rem' }}>
           Upload a batch of individual CV PDFs. Each one is extracted and saved to this search as soon as it's done.
         </div>
-        <FileUploader key={uploaderKey} onFileSelect={setFiles} theme={theme} disabled={processing} parseMode="individual" />
+        <FileUploader key={uploaderKey} onFileSelect={addFiles} theme={theme} disabled={processing} parseMode="individual" />
+
+        {entries.length > 0 && (
+          <div style={{ marginBottom: '1rem' }}>
+            <div style={{ fontSize: '0.75rem', fontWeight: 'bold', marginBottom: '0.35rem', opacity: 0.85 }}>
+              TO PROCESS: {entries.length} candidate{entries.length === 1 ? '' : 's'} ({fileCount} file{fileCount === 1 ? '' : 's'}). Upload more to add them.
+            </div>
+            {entries.map((e) => (
+              <div
+                key={e.id}
+                data-testid="upload-entry"
+                style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', justifyContent: 'space-between', padding: '0.3rem 0', borderTop: `1px solid ${borderColor}`, fontSize: '0.75rem' }}
+              >
+                <span>
+                  {e.files.length > 1 ? '🔗 ' : ''}
+                  {e.files.map((f) => f.name).join(' + ')}
+                </span>
+                <span style={{ display: 'flex', gap: '0.35rem' }}>
+                  {e.files.length > 1 && (
+                    <button onClick={() => setEntries(unbindEntry(entries, e))} disabled={processing} style={smallButton(!processing)}>
+                      UNBIND
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setEntries(entries.filter((x) => x.id !== e.id))}
+                    disabled={processing}
+                    aria-label={`Remove ${e.files.map((f) => f.name).join(' + ')}`}
+                    style={smallButton(!processing)}
+                  >
+                    ✕
+                  </button>
+                </span>
+              </div>
+            ))}
+            {suggestions.length > 0 && (
+              <div style={{ ...hint, marginTop: '0.5rem' }}>
+                💡 Similar names, possibly the same person:{' '}
+                {suggestions.map((group) => (
+                  <span key={group.map((x) => x.id).join()} style={{ display: 'inline-flex', gap: '0.35rem', alignItems: 'center', marginRight: '0.75rem' }}>
+                    {group.map((x) => x.files[0].name).join(' + ')}
+                    <button onClick={() => setEntries(bindEntries(entries, group))} disabled={processing} style={smallButton(!processing)}>
+                      QUICK BIND
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
           {processing ? (
             <button onClick={() => (cancelRef.current = true)} style={danger()}>
               [ ⏹️ STOP AFTER CURRENT CVs ]
             </button>
           ) : (
-            <button onClick={() => void handleProcess()} disabled={files.length === 0 || busy} style={button(files.length > 0 && !busy, true)}>
-              [ 🚀 PROCESS & SAVE {files.length || ''} CV{files.length === 1 ? '' : 's'} ]
-            </button>
+            <>
+              <button onClick={() => void handleProcess()} disabled={entries.length === 0 || busy} style={button(entries.length > 0 && !busy, true)}>
+                [ 🚀 PROCESS & SAVE {entries.length || ''} CV{entries.length === 1 ? '' : 's'} ]
+              </button>
+              {fileCount >= 2 && (
+                <button onClick={() => setBindOpen(true)} disabled={busy} style={button(!busy)}>
+                  [ 🔗 BIND CVs ]
+                </button>
+              )}
+              {entries.length > 0 && (
+                <button onClick={() => setEntries([])} disabled={busy} style={button(!busy)}>
+                  [ CLEAR ]
+                </button>
+              )}
+            </>
           )}
           {processing && (
             <span style={hint}>
@@ -516,22 +606,22 @@ export function SearchesPage({ clients, thinkingLevel, concurrencyLevel, theme }
 
       {search.failedFiles.length > 0 && (
         <div style={{ ...panel, borderColor: '#ff6b6b' }}>
-          <div style={title}>[ COULDN'T READ: {search.failedFiles.length} ]</div>
+          <div style={title}>[ COULDN'T READ: {failedGroups.length} ]</div>
           <div style={{ ...hint, marginBottom: '1rem' }}>
             Kept so you can try again without uploading them. Each file is deleted as soon as a retry works, when you
-            remove it or finish the search, and after 30 days at the latest.
+            remove it or finish the search, and after 30 days at the latest. Bound files stay bound.
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
-            <button onClick={() => void retryFailed(search.failedFiles.map((f) => f.id))} disabled={busy || processing} style={button(!busy && !processing, true)}>
+            <button onClick={() => void retryFailed(failedGroups)} disabled={busy || processing} style={button(!busy && !processing, true)}>
               [ ↻ RETRY ALL ]
             </button>
             <button onClick={() => void removeFailed('all')} disabled={busy || processing} style={danger(!busy && !processing)}>
               [ REMOVE ALL ]
             </button>
           </div>
-          {search.failedFiles.map((f) => (
+          {failedGroups.map((group) => (
             <div
-              key={f.id}
+              key={group[0].id}
               data-testid="failed-file"
               style={{
                 display: 'flex',
@@ -544,14 +634,17 @@ export function SearchesPage({ clients, thinkingLevel, concurrencyLevel, theme }
               }}
             >
               <div style={{ flex: '1 1 240px', fontSize: '0.75rem' }}>
-                <div style={{ fontWeight: 'bold' }}>{f.fileName}</div>
-                <div style={{ color: '#ff6b6b', marginTop: '0.15rem' }}>{f.error}</div>
+                <div style={{ fontWeight: 'bold' }}>
+                  {group.length > 1 ? '🔗 ' : ''}
+                  {group.map((f) => f.fileName).join(' + ')}
+                </div>
+                <div style={{ color: '#ff6b6b', marginTop: '0.15rem' }}>{group[0].error}</div>
               </div>
               <div style={{ display: 'flex', gap: '0.35rem' }}>
-                <button onClick={() => void retryFailed([f.id])} disabled={busy || processing} style={smallButton(!busy && !processing)}>
+                <button onClick={() => void retryFailed([group])} disabled={busy || processing} style={smallButton(!busy && !processing)}>
                   RETRY
                 </button>
-                <button onClick={() => void removeFailed([f.id])} disabled={busy || processing} style={{ ...smallButton(!busy && !processing), borderColor: '#ff6b6b', color: '#ff6b6b' }}>
+                <button onClick={() => void removeFailed([group])} disabled={busy || processing} style={{ ...smallButton(!busy && !processing), borderColor: '#ff6b6b', color: '#ff6b6b' }}>
                   REMOVE
                 </button>
               </div>
@@ -658,7 +751,18 @@ export function SearchesPage({ clients, thinkingLevel, concurrencyLevel, theme }
 
       {search.candidates.length > 0 && <ManualCopyOutput candidates={search.candidates.map((c) => c.data)} theme={theme} />}
 
+      {bindOpen && <BindDialog entries={entries} onChange={setEntries} onClose={() => setBindOpen(false)} theme={theme} />}
     </>
   );
+}
+
+/** Group stored failed files: files bound as one candidate together, the rest one by one */
+function groupFailed(files: FailedFile[]): FailedFile[][] {
+  const groups = new Map<string, FailedFile[]>();
+  for (const f of files) {
+    const key = f.groupId ?? f.id;
+    groups.set(key, [...(groups.get(key) ?? []), f]);
+  }
+  return [...groups.values()];
 }
 

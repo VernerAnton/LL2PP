@@ -55,4 +55,8 @@ before adding a service worker.
   13.5pt degree bullets in Calibri; `pptxFinish.ts` swaps in the company theme (`src/assets/pptx-theme.xml`,
   taken from a macro-processed deck) and sets the degree bullets to Arial. It was verified paragraph by
   paragraph against a deck the macro had processed; keep it that way. Don't reintroduce the `>>>` markers.
+- Bound CVs: an extraction request carries 1-5 `documents` (text or PDF) for one candidate; several
+  documents are combined into one profile (`worker/extract.ts`). The owner binds files in the BIND CVs
+  pop-up; name similarity (`src/services/bindSuggestions.ts`) only ever suggests, because two people can
+  share a name. Never bind automatically. Failed bound files share a `group_id` and are retried together.
 - Build output (`dist/`) is not committed.
