@@ -32,6 +32,11 @@ before adding a service worker.
   and logos, and saved searches (individual CVs in batches) with their candidates' extracted data only:
   `worker/searches.ts` whitelists the stored fields, so CV text can't be saved even if a client sends it.
   Searches are deleted with all candidates when the owner finishes them.
+- The one exception, on the owner's request: CV files that couldn't be read are kept per search
+  (`failed_files` in D1, PDFs in R2 under `failed/<search>/`) so they can be retried without uploading
+  again. Each is deleted when a retry succeeds, when removed, when the search is finished, and after 30
+  days at the latest (D1 pruning in `worker/searches.ts` plus the R2 lifecycle rule
+  `failed-cv-files-30-days`). Don't keep successfully read CVs this way.
 
 ## Other notes
 

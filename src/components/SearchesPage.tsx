@@ -7,6 +7,11 @@ import { PDFService, hasUsableText } from '../services/pdfService';
 import { formatSlideDate } from '../services/firstSlide';
 import {
   addCandidates,
+  getFailedFile,
+  keepFailedFile,
+  removeAllFailedFiles,
+  removeFailedFile,
+  updateFailedFile,
   createSearch,
   deleteCandidate,
   deleteSearch,
@@ -292,29 +297,37 @@ export function SearchesPage({ clients, thinkingLevel, concurrencyLevel, theme }
     setEditPosition(detail.position);
   };
 
-  const handleProcess = async () => {
-    if (files.length === 0) return;
-    const known = new Set(search.candidates.map((c) => c.sourceFile).filter(Boolean));
-    const repeats = files.filter((f) => known.has(f.name)).map((f) => f.name);
-    if (repeats.length && !confirm(`Already added to this search:\n${repeats.join('\n')}\n\nAdd them again?`)) return;
+  /** One CV to process: a new upload, or a stored failed file being retried */
+  interface Job {
+    fileName: string;
+    getFile: () => Promise<Blob>;
+    failedId?: string;
+  }
 
+  /**
+   * Extract and save each CV. A CV that fails is kept on the server (failed files) so it can be
+   * retried later without uploading it again; a retry that succeeds removes the stored file.
+   */
+  const runJobs = async (jobs: Job[]) => {
     cancelRef.current = false;
     setProcessing(true);
     setFailures([]);
     setBatchCost(null);
     setError(null);
-    setProgress({ done: 0, total: files.length });
+    setProgress({ done: 0, total: jobs.length });
 
     const searchId = search.id;
-    let candidates = [...search.candidates];
-    const batchFailures: BatchFailure[] = [];
+    const unkept: BatchFailure[] = [];
     let added = 0;
     let cost = 0;
     let done = 0;
 
-    const processFile = async (file: File) => {
+    const processJob = async (job: Job) => {
+      let file: Blob | null = null;
+      let failure: string;
       try {
-        const text = (await PDFService.parsePDF(file)).join('\n\n');
+        file = await job.getFile();
+        const text = (await PDFService.parsePDF(file as File)).join('\n\n');
         // A scanned CV has no text layer: send the PDF itself, Claude reads the page images
         const result = await AIService.extractCVData(hasUsableText(text) ? { text } : { pdf: file }, {
           extraFields: search.extraFields,
@@ -322,34 +335,79 @@ export function SearchesPage({ clients, thinkingLevel, concurrencyLevel, theme }
           source: 'individual',
         });
         cost += result.usage?.estimatedCost ?? 0;
-        if (!result.success || !result.data) {
-          batchFailures.push({ fileName: file.name, error: result.error ?? 'Unknown error' });
+        if (result.success && result.data) {
+          // Saved right away, so a closed tab or a failure later in the batch loses nothing
+          const [saved] = await addCandidates(searchId, [{ data: result.data, sourceFile: job.fileName }]);
+          added++;
+          setSearch((s) => (s ? { ...s, candidates: [...s.candidates, saved], candidateCount: s.candidates.length + 1 } : s));
+          if (job.failedId) {
+            const failedId = job.failedId;
+            await removeFailedFile(searchId, failedId);
+            setSearch((s) => (s ? { ...s, failedFiles: s.failedFiles.filter((f) => f.id !== failedId) } : s));
+          }
           return;
         }
-        // Saved right away, so a closed tab or a failure later in the batch loses nothing
-        const [saved] = await addCandidates(searchId, [{ data: result.data, sourceFile: file.name }]);
-        candidates = [...candidates, saved];
-        added++;
-        setCandidates(candidates);
+        failure = result.error ?? 'Unknown error';
       } catch (e) {
-        batchFailures.push({ fileName: file.name, error: e instanceof Error ? e.message : String(e) });
+        failure = e instanceof Error ? e.message : String(e);
       } finally {
         done++;
-        setProgress({ done, total: files.length });
+        setProgress({ done, total: jobs.length });
+      }
+
+      // Failed: keep the file for a later retry
+      try {
+        if (job.failedId) {
+          const failedId = job.failedId;
+          await updateFailedFile(searchId, failedId, failure);
+          setSearch((s) => (s ? { ...s, failedFiles: s.failedFiles.map((f) => (f.id === failedId ? { ...f, error: failure } : f)) } : s));
+        } else if (file) {
+          const kept = await keepFailedFile(searchId, file, job.fileName, failure);
+          setSearch((s) => (s ? { ...s, failedFiles: [...s.failedFiles, kept] } : s));
+        } else {
+          unkept.push({ fileName: job.fileName, error: failure });
+        }
+      } catch (e) {
+        unkept.push({ fileName: job.fileName, error: `${failure} (and the file couldn't be kept: ${e instanceof Error ? e.message : String(e)})` });
       }
     };
 
-    for (let i = 0; i < files.length && !cancelRef.current; i += concurrencyLevel) {
-      await Promise.all(files.slice(i, i + concurrencyLevel).map(processFile));
+    for (let i = 0; i < jobs.length && !cancelRef.current; i += concurrencyLevel) {
+      await Promise.all(jobs.slice(i, i + concurrencyLevel).map(processJob));
     }
 
-    setFailures(batchFailures);
+    setFailures(unkept);
     setBatchCost({ added, cost });
     setProcessing(false);
-    setFiles([]);
-    setUploaderKey((k) => k + 1);
     setDownloaded(false);
   };
+
+  const handleProcess = async () => {
+    if (files.length === 0) return;
+    const known = new Set(search.candidates.map((c) => c.sourceFile).filter(Boolean));
+    const repeats = files.filter((f) => known.has(f.name)).map((f) => f.name);
+    if (repeats.length && !confirm(`Already added to this search:\n${repeats.join('\n')}\n\nAdd them again?`)) return;
+    const jobs: Job[] = files.map((file) => ({ fileName: file.name, getFile: async () => file }));
+    setFiles([]);
+    setUploaderKey((k) => k + 1);
+    await runJobs(jobs);
+  };
+
+  const retryFailed = (ids: string[]) =>
+    runJobs(
+      search.failedFiles
+        .filter((f) => ids.includes(f.id))
+        .map((f) => ({ fileName: f.fileName, failedId: f.id, getFile: () => getFailedFile(search.id, f.id) }))
+    );
+
+  const removeFailed = (ids: string[] | 'all') =>
+    run(async () => {
+      const count = ids === 'all' ? search.failedFiles.length : ids.length;
+      if (ids === 'all' && !confirm(`Remove all ${count} files that couldn't be read? They are deleted from the server.`)) return;
+      if (ids === 'all') await removeAllFailedFiles(search.id);
+      else await Promise.all(ids.map((id) => removeFailedFile(search.id, id)));
+      setSearch((s) => (s ? { ...s, failedFiles: ids === 'all' ? [] : s.failedFiles.filter((f) => !ids.includes(f.id)) } : s));
+    });
 
   const move = (index: number, delta: number) =>
     run(async () => {
@@ -449,12 +507,58 @@ export function SearchesPage({ clients, thinkingLevel, concurrencyLevel, theme }
           <div style={{ marginTop: '1rem' }}>
             {failures.map((f, i) => (
               <div key={i} style={{ fontSize: '0.75rem', color: '#ff6b6b', marginBottom: '0.25rem' }}>
-                ✗ {f.fileName}: {f.error} (not saved)
+                ✗ {f.fileName}: {f.error} (not saved, upload it again)
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {search.failedFiles.length > 0 && (
+        <div style={{ ...panel, borderColor: '#ff6b6b' }}>
+          <div style={title}>[ COULDN'T READ: {search.failedFiles.length} ]</div>
+          <div style={{ ...hint, marginBottom: '1rem' }}>
+            Kept so you can try again without uploading them. Each file is deleted as soon as a retry works, when you
+            remove it or finish the search, and after 30 days at the latest.
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+            <button onClick={() => void retryFailed(search.failedFiles.map((f) => f.id))} disabled={busy || processing} style={button(!busy && !processing, true)}>
+              [ ↻ RETRY ALL ]
+            </button>
+            <button onClick={() => void removeFailed('all')} disabled={busy || processing} style={danger(!busy && !processing)}>
+              [ REMOVE ALL ]
+            </button>
+          </div>
+          {search.failedFiles.map((f) => (
+            <div
+              key={f.id}
+              data-testid="failed-file"
+              style={{
+                display: 'flex',
+                gap: '0.5rem',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '0.5rem 0',
+                borderTop: `1px solid ${borderColor}`,
+              }}
+            >
+              <div style={{ flex: '1 1 240px', fontSize: '0.75rem' }}>
+                <div style={{ fontWeight: 'bold' }}>{f.fileName}</div>
+                <div style={{ color: '#ff6b6b', marginTop: '0.15rem' }}>{f.error}</div>
+              </div>
+              <div style={{ display: 'flex', gap: '0.35rem' }}>
+                <button onClick={() => void retryFailed([f.id])} disabled={busy || processing} style={smallButton(!busy && !processing)}>
+                  RETRY
+                </button>
+                <button onClick={() => void removeFailed([f.id])} disabled={busy || processing} style={{ ...smallButton(!busy && !processing), borderColor: '#ff6b6b', color: '#ff6b6b' }}>
+                  REMOVE
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Download and finish sit above the candidate list, so they're reachable without scrolling past every name */}
       {search.candidates.length > 0 && (

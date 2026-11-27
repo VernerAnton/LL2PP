@@ -80,6 +80,15 @@ export interface SavedCandidate {
   sourceFile: string;
 }
 
+/** A CV file that couldn't be processed, kept (up to 30 days) so it can be retried */
+export interface FailedFile {
+  id: string;
+  fileName: string;
+  error: string;
+  createdAt: string;
+}
+
 export interface SearchDetail extends SearchSummary {
   candidates: SavedCandidate[];
+  failedFiles: FailedFile[];
 }
