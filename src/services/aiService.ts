@@ -17,7 +17,10 @@ export interface ExtractionResult {
   success: boolean;
   data?: CandidateData;
   error?: string;
+  /** Tokens and cost of every request made for this CV, failed ones included */
   usage?: TokenUsage;
+  /** Requests made: 1, or 2 when Auto retried at high effort */
+  requests: number;
 }
 
 /** One document of a candidate: its text, or the PDF file itself when it has no text (a scanned CV) */
@@ -28,6 +31,8 @@ export interface ExtractOptions {
   level: ThinkingLevel;
   /** What kind of CV this is, for Auto: longlist exports are clean, individual CVs vary */
   source: 'longlist' | 'individual';
+  /** Saved search the CV belongs to: the server adds the token use to its totals */
+  searchId?: string;
 }
 
 export class AIService {
@@ -51,12 +56,14 @@ export class AIService {
     const effort: ThinkingEffort =
       options.level === 'auto' ? (options.source === 'longlist' ? 'low' : 'medium') : options.level;
 
-    let result = await this.request(documents, options.extraFields, effort);
+    let requests = 1;
+    let result = await this.request(documents, options, effort);
 
     // Auto: a CV that came back broken or without any work history gets one more try at high effort
     const incomplete = result.success && (result.data?.workHistory.length ?? 0) === 0;
     if (auto && effort !== 'high' && ((!result.success && result.retryAtHigherEffort) || incomplete)) {
-      const retry = await this.request(documents, options.extraFields, 'high');
+      requests++;
+      const retry = await this.request(documents, options, 'high');
       if (retry.success || !result.success) {
         result = { ...retry, usage: addUsage(result.usage, retry.usage) };
       } else if (result.usage) {
@@ -69,14 +76,15 @@ export class AIService {
       data: result.data ? { ...result.data, rawText: parts.map((p) => ('text' in p ? p.text : '')).join('\n\n') } : undefined,
       error: result.error,
       usage: result.usage,
+      requests,
     };
   }
 
-  private static async request(documents: CvDocument[], extraFields: ExtraFieldId[], effort: ThinkingEffort): Promise<ExtractResponse> {
+  private static async request(documents: CvDocument[], options: ExtractOptions, effort: ThinkingEffort): Promise<ExtractResponse> {
     try {
       return await api<ExtractResponse>('extract', {
         method: 'POST',
-        body: jsonBody({ documents, extraFields, effort }),
+        body: jsonBody({ documents, extraFields: options.extraFields, effort, ...(options.searchId ? { searchId: options.searchId } : {}) }),
       });
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };

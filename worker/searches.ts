@@ -13,6 +13,10 @@ interface SearchRow {
   created_at: string;
   updated_at: string;
   candidate_count?: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  cv_reads: number;
 }
 
 interface CandidateRow {
@@ -51,6 +55,12 @@ function toSummary(row: SearchRow): SearchSummary {
     position: row.position,
     extraFields: JSON.parse(row.extra_fields) as ExtraFieldId[],
     candidateCount: row.candidate_count ?? 0,
+    usage: {
+      inputTokens: row.input_tokens ?? 0,
+      outputTokens: row.output_tokens ?? 0,
+      costUsd: row.cost_usd ?? 0,
+      cvReads: row.cv_reads ?? 0,
+    },
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

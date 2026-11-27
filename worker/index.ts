@@ -29,7 +29,18 @@ export default {
       if (resource === 'me' && request.method === 'GET') return json({ email: auth.email });
       if (resource === 'model' && request.method === 'GET') return json({ model: await getModel(env) });
       if (resource === 'extract' && request.method === 'POST') {
-        return json(await extractCV(env, parseExtractRequest(await request.json())));
+        const extractRequest = parseExtractRequest(await request.json());
+        const result = await extractCV(env, extractRequest);
+        // Add this CV's token use and cost to its search's running totals
+        if (extractRequest.searchId) {
+          await env.DB.prepare(
+            `UPDATE searches SET input_tokens = input_tokens + ?, output_tokens = output_tokens + ?,
+               cost_usd = cost_usd + ?, cv_reads = cv_reads + 1 WHERE id = ?`
+          )
+            .bind(result.usage?.inputTokens ?? 0, result.usage?.outputTokens ?? 0, result.usage?.estimatedCost ?? 0, extractRequest.searchId)
+            .run();
+        }
+        return json(result);
       }
       if (resource === 'clients') return await handleClients(request, env, rest);
       if (resource === 'searches') return await handleSearches(request, env, rest);
@@ -81,5 +92,6 @@ function parseExtractRequest(body: unknown): ExtractRequest {
   if (ids.length > MAX_SELECTED_EXTRAS || !ids.every((id) => known.has(id as ExtraFieldId))) {
     throw new HttpError(400, 'Invalid extra details');
   }
-  return { documents, extraFields: ids as ExtraFieldId[], effort: b.effort as ThinkingEffort };
+  const searchId = typeof b.searchId === 'string' && /^[0-9a-f-]{36}$/.test(b.searchId) ? b.searchId : undefined;
+  return { documents, extraFields: ids as ExtraFieldId[], effort: b.effort as ThinkingEffort, ...(searchId ? { searchId } : {}) };
 }

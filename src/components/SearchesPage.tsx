@@ -26,6 +26,7 @@ import { FileUploader } from './FileUploader';
 import { GenerateButton } from './GenerateButton';
 import { ManualCopyOutput } from './ManualCopyOutput';
 import { CandidateEditor } from './CandidateEditor';
+import { UsageSummary, addToUsage } from './UsageSummary';
 import { BindDialog, bindEntries, bindSuggestions, unbindEntry, type UploadEntry } from './BindDialog';
 
 interface SearchesPageProps {
@@ -216,7 +217,8 @@ export function SearchesPage({ clients, thinkingLevel, concurrencyLevel, theme }
                   <span style={{ opacity: 0.7 }}>
                     {' '}
                     · {clients.find((c) => c.id === s.clientId)?.name ?? 'no client'}
-                    {s.position ? ` · ${s.position}` : ''} · {s.candidateCount} candidate{s.candidateCount === 1 ? '' : 's'} · updated{' '}
+                    {s.position ? ` · ${s.position}` : ''} · {s.candidateCount} candidate{s.candidateCount === 1 ? '' : 's'} · $
+                    {s.usage.costUsd.toFixed(2)} · updated{' '}
                     {shortDate(s.updatedAt)}
                   </span>
                 </button>
@@ -341,8 +343,11 @@ export function SearchesPage({ clients, thinkingLevel, concurrencyLevel, theme }
           extraFields: search.extraFields,
           level: thinkingLevel,
           source: 'individual',
+          searchId, // the server adds the token use to this search's totals
         });
         cost += result.usage?.estimatedCost ?? 0;
+        // Same totals as the server keeps, updated live (failed CVs count: they are billed)
+        setSearch((s) => (s ? { ...s, usage: addToUsage(s.usage, result.usage, result.requests) } : s));
         if (result.success && result.data) {
           // Saved right away, so a closed tab or a failure later in the batch loses nothing
           const [saved] = await addCandidates(searchId, [{ data: result.data, sourceFile: job.label }]);
@@ -504,6 +509,15 @@ export function SearchesPage({ clients, thinkingLevel, concurrencyLevel, theme }
           </span>
         </div>
       </div>
+
+      <UsageSummary
+        usage={search.usage}
+        candidates={search.candidates.length}
+        title="API USAGE: THIS SEARCH"
+        note="Kept while the search exists and deleted with it."
+        inProgress={processing}
+        theme={theme}
+      />
 
       <div style={panel}>
         <div style={title}>[ ADD CVs ]</div>

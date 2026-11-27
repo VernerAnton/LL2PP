@@ -12,6 +12,8 @@ export interface ExtractRequest {
   documents: CvDocument[];
   extraFields: ExtraFieldId[];
   effort: ThinkingEffort;
+  /** For a saved search: the server adds this request's token use and cost to the search's totals */
+  searchId?: string;
 }
 
 export const MAX_DOCUMENTS_PER_CANDIDATE = 5;
@@ -67,8 +69,18 @@ export interface LogoMeta {
   placement: SlideBox;
 }
 
+/** Token use and estimated cost of a search so far (every Claude call, including failed ones) */
+export interface SearchUsage {
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  /** Extraction requests made: each CV (or bound group) read, plus Auto's retries */
+  cvReads: number;
+}
+
 export interface SearchSummary {
   id: string;
+  usage: SearchUsage;
   name: string;
   clientId: string | null;
   position: string;

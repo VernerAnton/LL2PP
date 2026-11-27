@@ -9,7 +9,8 @@ import { DesignContext, getDesign } from './services/designService';
 import { BUILT_IN_DESIGN, type SlideDesign } from './shared/design';
 import { FirstSlideInput } from './components/FirstSlideInput';
 import { listClients } from './services/clientsService';
-import type { Client } from './shared/apiTypes';
+import type { Client, SearchUsage } from './shared/apiTypes';
+import { EMPTY_USAGE, UsageSummary, addToUsage } from './components/UsageSummary';
 import { ParseModeSelector } from './components/ParseModeSelector';
 import { ConcurrencySelector } from './components/ConcurrencySelector';
 import { ExtraDetailsInput } from './components/ExtraDetailsInput';
@@ -23,7 +24,7 @@ import { useAppUpdate } from './useAppUpdate';
 import { APP_VERSION } from './version';
 import { StorageService } from './services/storageService';
 import { PDFService, hasUsableText } from './services/pdfService';
-import { AIService, type ThinkingLevel } from './services/aiService';
+import { AIService, type ExtractionResult, type ThinkingLevel } from './services/aiService';
 import type { Theme, ActualTheme, ProcessingStatus, CandidateData, ProcessingError, ParseMode, ConcurrencyLevel } from './types';
 
 function App() {
@@ -59,8 +60,8 @@ function App() {
   // Extra details (e.g. location) for this run only; deliberately not saved
   const [extraFields, setExtraFields] = useState<ExtraFieldId[]>([]);
 
-  const [totalCost, setTotalCost] = useState(0);
-  const [totalTokens, setTotalTokens] = useState(0);
+  // Token use and estimated cost of this run (every CV, failed ones too); cleared by reset
+  const [usage, setUsage] = useState<SearchUsage>(EMPTY_USAGE);
 
   const [justReset, setJustReset] = useState(false);
   const [fileUploaderKey, setFileUploaderKey] = useState(0);
@@ -141,8 +142,7 @@ function App() {
     setProcessingStatus('idle');
     setProgressCurrent(0);
     setProgressTotal(0);
-    setTotalCost(0);
-    setTotalTokens(0);
+    setUsage(EMPTY_USAGE);
     setFileUploaderKey((prev: number) => prev + 1);
     setExtraFields([]);
     setFirstSlideClientId('');
@@ -171,8 +171,7 @@ function App() {
       setProgressTotal(0);
       setExtractedCandidates([]);
       setFailedExtractions([]);
-      setTotalCost(0);
-      setTotalTokens(0);
+      setUsage(EMPTY_USAGE);
 
       const allCVs: any[] = [];
 
@@ -207,8 +206,7 @@ function App() {
 
       // Process CVs with controlled concurrency
       let completedCount = 0;
-      let cumulativeCost = 0;
-      let cumulativeTokens = 0;
+      let runUsage = EMPTY_USAGE;
 
       for (let i = 0; i < allCVs.length; i += concurrencyLevel) {
         // Check if extraction was cancelled
@@ -226,7 +224,7 @@ function App() {
             level: thinkingLevel,
             source: parseMode,
           };
-          let result;
+          let result: ExtractionResult;
           if (hasUsableText(cv.text)) {
             result = await AIService.extractCVData([{ text: cv.text }], options);
           } else if (cv.file) {
@@ -236,6 +234,7 @@ function App() {
             result = {
               success: false,
               error: 'No readable text on these pages (scanned?). Upload this CV on its own in a search or Individual mode.',
+              requests: 0, // nothing was sent to Claude
             };
           }
 
@@ -249,13 +248,11 @@ function App() {
         const batchResults = await Promise.all(batchPromises);
 
         for (const { index, result, cv } of batchResults) {
+          // Track usage and cost: every CV counts, failed ones too (they are billed)
+          runUsage = addToUsage(runUsage, result.usage, result.requests);
           if (result.success && result.data) {
             candidates.push(result.data);
-            // Track usage and cost
-            if (result.usage) {
-              cumulativeCost += result.usage.estimatedCost;
-              cumulativeTokens += result.usage.totalTokens;
-            }
+
           } else {
             errors.push({
               candidateIndex: index,
@@ -270,12 +267,10 @@ function App() {
         // Update state after each batch to show results in real-time
         setExtractedCandidates([...candidates]);
         setFailedExtractions([...errors]);
-        setTotalCost(cumulativeCost);
-        setTotalTokens(cumulativeTokens);
+        setUsage(runUsage);
       }
 
-      setTotalCost(cumulativeCost);
-      setTotalTokens(cumulativeTokens);
+      setUsage(runUsage);
       setExtractedCandidates(candidates);
       setFailedExtractions(errors);
       setProcessingStatus('done');
@@ -416,56 +411,16 @@ function App() {
       />
 
       {/* Cost Tracking Display */}
-      {(processingStatus === 'extracting' || processingStatus === 'done') && totalTokens > 0 && (
-        <div
-          style={{
-            padding: '1.5rem',
-            border: `2px solid ${borderColor}`,
-            background: bgColor,
-            boxShadow: `4px 4px 0px ${borderColor}`,
-            marginBottom: '1.5rem',
-          }}
-        >
-          <div
-            style={{
-              fontSize: '0.875rem',
-              fontWeight: 'bold',
-              marginBottom: '1rem',
-              letterSpacing: '0.1em',
-              color: textColor,
-            }}
-          >
-            [ {processingStatus === 'extracting' ? '⏳ ' : ''}API USAGE SUMMARY{processingStatus === 'extracting' ? ' (IN PROGRESS)' : ''} ]
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <div style={{ color: textColor }}>
-              <div style={{ fontSize: '0.75rem', opacity: 0.7, marginBottom: '0.25rem' }}>
-                TOTAL TOKENS:
-              </div>
-              <div style={{ fontSize: '1.25rem', fontWeight: 'bold', fontFamily: 'Courier New, monospace' }}>
-                {totalTokens.toLocaleString()}
-              </div>
-            </div>
-            <div style={{ color: textColor }}>
-              <div style={{ fontSize: '0.75rem', opacity: 0.7, marginBottom: '0.25rem' }}>
-                ESTIMATED COST:
-              </div>
-              <div style={{ fontSize: '1.25rem', fontWeight: 'bold', fontFamily: 'Courier New, monospace' }}>
-                ${totalCost.toFixed(4)}
-              </div>
-            </div>
-          </div>
-          <div
-            style={{
-              fontSize: '0.65rem',
-              opacity: 0.5,
-              marginTop: '1rem',
-              color: textColor,
-            }}
-          >
-            💡 Cost per CV: ${(totalCost / extractedCandidates.length).toFixed(4)} • Model: {activeModel ?? 'Claude Sonnet'}
-          </div>
-        </div>
+      {(processingStatus === 'extracting' || processingStatus === 'done') && usage.cvReads > 0 && (
+        <UsageSummary
+          usage={usage}
+          candidates={extractedCandidates.length}
+          title="API USAGE: THIS RUN"
+          note="Not saved: cleared by reset."
+          inProgress={processingStatus === 'extracting'}
+          model={activeModel}
+          theme={actualTheme}
+        />
       )}
 
       {uploadedFiles.length > 0 && (

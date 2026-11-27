@@ -59,4 +59,7 @@ before adding a service worker.
   documents are combined into one profile (`worker/extract.ts`). The owner binds files in the BIND CVs
   pop-up; name similarity (`src/services/bindSuggestions.ts`) only ever suggests, because two people can
   share a name. Never bind automatically. Failed bound files share a `group_id` and are retried together.
+- Usage totals: the Worker counts every Claude response (failed and declined ones are billed too) and,
+  when an extraction request carries `searchId`, adds it to that search's totals (`searches.input_tokens`,
+  `output_tokens`, `cost_usd`, `cv_reads`). The pages show the same numbers via `UsageSummary`.
 - Build output (`dist/`) is not committed.

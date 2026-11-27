@@ -3,7 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import { z } from 'zod';
 import type { CandidateData, WorkExperience, Education, ExtraDetail } from '../src/types';
-import type { CvDocument, ExtractRequest, ExtractResponse, ThinkingEffort } from '../src/shared/apiTypes';
+import type { CvDocument, ExtractRequest, ExtractResponse, ThinkingEffort, TokenUsage } from '../src/shared/apiTypes';
 import { selectedExtraFields, type ExtraField } from '../src/services/extraDetails';
 
 // Schema for the extracted CV data. It is sent to the API as a structured-output JSON schema,
@@ -190,11 +190,14 @@ export async function extractCV(env: Env, request: ExtractRequest): Promise<Extr
   const fields = selectedExtraFields(request.extraFields);
   let lastError = 'Unknown error';
   let outputProblem = false;
+  // Every Claude response is paid for, including declined or invalid ones, so all attempts count
+  const spent: TokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCost: 0 };
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     const model = await getModel(env);
     try {
-      return await performExtraction(anthropic, model, request.documents, fields, request.effort);
+      const result = await performExtraction(anthropic, model, request.documents, fields, request.effort, spent);
+      return { ...result, usage: { ...spent } };
     } catch (error) {
       lastError = describeError(error);
       outputProblem = error instanceof OutputError;
@@ -210,7 +213,7 @@ export async function extractCV(env: Env, request: ExtractRequest): Promise<Extr
     }
   }
 
-  return { success: false, error: lastError, retryAtHigherEffort: outputProblem };
+  return { success: false, error: lastError, retryAtHigherEffort: outputProblem, ...(spent.totalTokens ? { usage: { ...spent } } : {}) };
 }
 
 async function performExtraction(
@@ -218,7 +221,8 @@ async function performExtraction(
   model: string,
   documents: CvDocument[],
   extraFields: ExtraField[],
-  effort: ThinkingEffort
+  effort: ThinkingEffort,
+  spent: TokenUsage
 ): Promise<ExtractResponse> {
   const response = await anthropic.beta.messages.parse({
     model,
@@ -235,6 +239,12 @@ async function performExtraction(
     betas: ['server-side-fallback-2026-07-01'],
     fallbacks: 'default',
   });
+
+  // Count the tokens before checking the answer: a declined or cut-off answer is still billed
+  spent.inputTokens += response.usage.input_tokens;
+  spent.outputTokens += response.usage.output_tokens;
+  spent.totalTokens += response.usage.input_tokens + response.usage.output_tokens;
+  spent.estimatedCost += calculateCost(response.model, response.usage.input_tokens, response.usage.output_tokens);
 
   if (response.stop_reason === 'refusal') {
     const category = response.stop_details?.category;
