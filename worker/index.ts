@@ -1,6 +1,6 @@
 // LL2PP Worker: serves the API. The React app itself is served as static assets; only /api/*
 // reaches this code (see "run_worker_first" in wrangler.jsonc).
-import type { ExtractRequest, ThinkingEffort } from '../src/shared/apiTypes';
+import type { CvInput, ExtractRequest, ThinkingEffort } from '../src/shared/apiTypes';
 import { EXTRA_FIELDS, MAX_SELECTED_EXTRAS, type ExtraFieldId } from '../src/services/extraDetails';
 import { checkAccess } from './auth';
 import { handleClients } from './clients';
@@ -10,6 +10,8 @@ import { extractCV, getModel } from './extract';
 import { HttpError, json } from './http';
 
 const MAX_CV_CHARS = 300_000;
+// 15 MB of PDF, base64-encoded (Claude accepts up to 32 MB per request)
+const MAX_PDF_BASE64_CHARS = Math.ceil((15 * 1024 * 1024 * 4) / 3);
 const EFFORTS: ThinkingEffort[] = ['low', 'medium', 'high'];
 
 export default {
@@ -45,13 +47,23 @@ export default {
 
 function parseExtractRequest(body: unknown): ExtractRequest {
   const b = (body ?? {}) as Record<string, unknown>;
-  if (typeof b.cvText !== 'string' || !b.cvText.trim()) throw new HttpError(400, 'cvText is required');
-  if (b.cvText.length > MAX_CV_CHARS) throw new HttpError(400, 'CV text is too long');
+  let cv: CvInput;
+  if (typeof b.cvText === 'string' && b.cvText.trim()) {
+    if (b.cvText.length > MAX_CV_CHARS) throw new HttpError(400, 'CV text is too long');
+    cv = { cvText: b.cvText };
+  } else if (typeof b.cvPdfBase64 === 'string' && b.cvPdfBase64) {
+    // Scanned CV: the PDF goes to Claude, which reads the pages as images
+    if (b.cvPdfBase64.length > MAX_PDF_BASE64_CHARS) throw new HttpError(400, 'The PDF is too large (max 15 MB)');
+    if (!b.cvPdfBase64.startsWith('JVBERi')) throw new HttpError(400, 'That file is not a PDF'); // "%PDF" in base64
+    cv = { cvPdfBase64: b.cvPdfBase64 };
+  } else {
+    throw new HttpError(400, 'No CV text or PDF was sent');
+  }
   if (!EFFORTS.includes(b.effort as ThinkingEffort)) throw new HttpError(400, 'Invalid effort');
   const ids = Array.isArray(b.extraFields) ? b.extraFields : [];
   const known = new Set(EXTRA_FIELDS.map((f) => f.id));
   if (ids.length > MAX_SELECTED_EXTRAS || !ids.every((id) => known.has(id as ExtraFieldId))) {
     throw new HttpError(400, 'Invalid extra details');
   }
-  return { cvText: b.cvText, extraFields: ids as ExtraFieldId[], effort: b.effort as ThinkingEffort };
+  return { ...cv, extraFields: ids as ExtraFieldId[], effort: b.effort as ThinkingEffort };
 }

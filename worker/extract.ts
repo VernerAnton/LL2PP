@@ -3,7 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import { z } from 'zod';
 import type { CandidateData, WorkExperience, Education, ExtraDetail } from '../src/types';
-import type { ExtractRequest, ExtractResponse, ThinkingEffort } from '../src/shared/apiTypes';
+import type { CvInput, ExtractRequest, ExtractResponse, ThinkingEffort } from '../src/shared/apiTypes';
 import { selectedExtraFields, type ExtraField } from '../src/services/extraDetails';
 
 // Schema for the extracted CV data. It is sent to the API as a structured-output JSON schema,
@@ -41,20 +41,33 @@ function buildSchema(extraFields: ExtraField[]) {
   });
 }
 
-function buildUserMessage(cvText: string, extraFields: ExtraField[]): string {
-  if (extraFields.length === 0) return `Extract the candidate data from this CV:\n\n${cvText}`;
+/**
+ * The instructions for one CV. With text the CV follows the instructions; for a scanned CV
+ * (cvText null) the PDF is attached before them and Claude reads the pages as images.
+ */
+function buildUserMessage(cvText: string | null, extraFields: ExtraField[]): string {
+  const intro = cvText === null
+    ? 'Extract the candidate data from the CV in the attached PDF. It is scanned, so read it from the page images.'
+    : 'Extract the candidate data from this CV.';
+  const cvPart = cvText === null ? '' : `\n\nCV:\n\n${cvText}`;
+  if (extraFields.length === 0) return `${intro}${cvPart}`;
   const fieldList = extraFields.map((field) => `- ${field.id}: ${field.instruction}`).join('\n');
   const today = new Date().toISOString().slice(0, 10);
-  return `Extract the candidate data from this CV. For this longlist, also extract these extra details into "extras":
+  return `${intro} For this longlist, also extract these extra details into "extras":
 ${fieldList}
 
 Each value is shown after the candidate's name on a slide, so keep it short and in exactly the form described. Base it only on what the CV states. If the CV doesn't give the information, use an empty string. Never guess.
 
-Today's date: ${today}
+Today's date: ${today}${cvPart}`;
+}
 
-CV:
-
-${cvText}`;
+/** The user turn: CV text, or the scanned PDF (document first) followed by the instructions */
+function buildContent(cv: CvInput, extraFields: ExtraField[]): Anthropic.Beta.BetaContentBlockParam[] | string {
+  if ('cvText' in cv) return buildUserMessage(cv.cvText, extraFields);
+  return [
+    { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: cv.cvPdfBase64 } },
+    { type: 'text', text: buildUserMessage(null, extraFields) },
+  ];
 }
 
 // Values that mean "not stated" even though the instructions ask for an empty string
@@ -159,7 +172,7 @@ export async function extractCV(env: Env, request: ExtractRequest): Promise<Extr
   for (let attempt = 1; attempt <= 2; attempt++) {
     const model = await getModel(env);
     try {
-      return await performExtraction(anthropic, model, request.cvText, fields, request.effort);
+      return await performExtraction(anthropic, model, request, fields, request.effort);
     } catch (error) {
       lastError = describeError(error);
       outputProblem = error instanceof OutputError;
@@ -181,7 +194,7 @@ export async function extractCV(env: Env, request: ExtractRequest): Promise<Extr
 async function performExtraction(
   anthropic: Anthropic,
   model: string,
-  cvText: string,
+  cv: CvInput,
   extraFields: ExtraField[],
   effort: ThinkingEffort
 ): Promise<ExtractResponse> {
@@ -190,7 +203,7 @@ async function performExtraction(
     // Leaves room for thinking tokens as well as the JSON answer
     max_tokens: 16000,
     system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: buildUserMessage(cvText, extraFields) }],
+    messages: [{ role: 'user', content: buildContent(cv, extraFields) }],
     // Thinking is adaptive (Claude decides how much to think); effort sets how deep it goes
     output_config: {
       effort,

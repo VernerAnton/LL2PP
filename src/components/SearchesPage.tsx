@@ -3,7 +3,7 @@ import type { ActualTheme, ConcurrencyLevel } from '../types';
 import type { Client, SavedCandidate, SearchDetail, SearchSummary } from '../shared/apiTypes';
 import { MAX_SELECTED_EXTRAS, selectedExtraFields, type ExtraFieldId } from '../services/extraDetails';
 import { AIService, type ThinkingLevel } from '../services/aiService';
-import { PDFService } from '../services/pdfService';
+import { PDFService, hasUsableText } from '../services/pdfService';
 import { formatSlideDate } from '../services/firstSlide';
 import {
   addCandidates,
@@ -315,7 +315,8 @@ export function SearchesPage({ clients, thinkingLevel, concurrencyLevel, theme }
     const processFile = async (file: File) => {
       try {
         const text = (await PDFService.parsePDF(file)).join('\n\n');
-        const result = await AIService.extractCVData(text, {
+        // A scanned CV has no text layer: send the PDF itself, Claude reads the page images
+        const result = await AIService.extractCVData(hasUsableText(text) ? { text } : { pdf: file }, {
           extraFields: search.extraFields,
           level: thinkingLevel,
           source: 'individual',
@@ -455,6 +456,29 @@ export function SearchesPage({ clients, thinkingLevel, concurrencyLevel, theme }
         )}
       </div>
 
+      {/* Download and finish sit above the candidate list, so they're reachable without scrolling past every name */}
+      {search.candidates.length > 0 && (
+        <GenerateButton
+          candidates={search.candidates.map((c) => c.data)}
+          position={search.position}
+          client={client}
+          theme={theme}
+          onGenerated={() => setDownloaded(true)}
+        />
+      )}
+
+      <div style={{ ...panel, borderColor: downloaded ? '#ff6b6b' : borderColor }}>
+        <div style={title}>[ FINISH ]</div>
+        <div style={{ ...hint, marginBottom: '1rem' }}>
+          {downloaded
+            ? 'Deck downloaded. If this search is finished, delete it now so no candidate data is kept.'
+            : 'When the search is done: download the deck, then delete the search. This removes all its candidate data.'}
+        </div>
+        <button onClick={() => void handleDelete(true)} disabled={busy || processing} style={danger(!busy && !processing)}>
+          [ FINISH & DELETE SEARCH ]
+        </button>
+      </div>
+
       <div style={panel}>
         <div style={title}>[ CANDIDATES: {search.candidates.length} ]</div>
         {search.candidates.length === 0 && <div style={hint}>No candidates yet. Add the first batch of CVs above.</div>}
@@ -528,29 +552,8 @@ export function SearchesPage({ clients, thinkingLevel, concurrencyLevel, theme }
         {error && <div style={{ fontSize: '0.75rem', color: '#ff6b6b' }}>Error: {error}</div>}
       </div>
 
-      {search.candidates.length > 0 && (
-        <GenerateButton
-          candidates={search.candidates.map((c) => c.data)}
-          position={search.position}
-          client={client}
-          theme={theme}
-          onGenerated={() => setDownloaded(true)}
-        />
-      )}
-
       {search.candidates.length > 0 && <ManualCopyOutput candidates={search.candidates.map((c) => c.data)} theme={theme} />}
 
-      <div style={{ ...panel, borderColor: downloaded ? '#ff6b6b' : borderColor }}>
-        <div style={title}>[ FINISH ]</div>
-        <div style={{ ...hint, marginBottom: '1rem' }}>
-          {downloaded
-            ? 'Deck downloaded. If this search is finished, delete it now so no candidate data is kept.'
-            : 'When the search is done: download the deck, then delete the search. This removes all its candidate data.'}
-        </div>
-        <button onClick={() => void handleDelete(true)} disabled={busy || processing} style={danger(!busy && !processing)}>
-          [ FINISH & DELETE SEARCH ]
-        </button>
-      </div>
     </>
   );
 }
